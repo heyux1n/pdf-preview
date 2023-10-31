@@ -106,17 +106,6 @@
         return new RenderRect(leftTopPoint.x, leftTopPoint.y, rightBottomPoint.x - leftTopPoint.x, rightBottomPoint.y - leftTopPoint.y)
       }
 
-
-      contains(point) {
-        if (this.right < point.x ||
-          this.bottom < point.y ||
-          this.left > point.x ||
-          this.top > point.y) {
-          return false
-        }
-        return true
-      }
-
     }
   </script>
   <script>
@@ -150,7 +139,6 @@
     let isHorizontalScroll
     let horizontalScrollPoint
 
-    let renderRects
 
     onload = () => {
       let wrapper = document.getElementById('wrapper')
@@ -218,8 +206,8 @@
       let translateY = p1.y - p2.y
 
       let translate = translateBoundCheck(translateX, translateY)
-      let matrix = contentMatrix.translate(translate.x, translate.y)
-      renderFrame(matrix)
+      contentMatrix.translateSelf(translate.x, translate.y)
+      renderFrame(contentMatrix)
       mouseStratPoint = new DOMPoint(e.pageX, e.pageY)
 
       transformScrollBar()
@@ -260,13 +248,13 @@
       transformMatrix.scaleSelf(scale)
       transformMatrix.translateSelf(-point.x, -point.y)
 
-      let matrix = contentMatrix.scale(scale)
-      let deltaX = (transformMatrix.e - matrix.e) / transformMatrix.a
-      let deltaY = (transformMatrix.f - matrix.f) / transformMatrix.d
-      let translate = translateBoundCheck(deltaX, deltaY, matrix)
-      matrix.translateSelf(translate.x, translate.y)
+      contentMatrix.scaleSelf(scale)
+      let deltaX = (transformMatrix.e - contentMatrix.e) / transformMatrix.a
+      let deltaY = (transformMatrix.f - contentMatrix.f) / transformMatrix.d
+      let translate = translateBoundCheck(deltaX, deltaY)
+      contentMatrix.translateSelf(translate.x, translate.y)
 
-      renderFrame(matrix, point)
+      renderFrame(contentMatrix)
       updateScrollBarSize()
       transformScrollBar()
     }
@@ -277,8 +265,8 @@
       let translateX = -e.deltaY / contentMatrix.a
 
       let translate = translateBoundCheck(translateX, 0)
-      let matrix = contentMatrix.translate(translate.x, translate.y)
-      renderFrame(matrix)
+      contentMatrix.translateSelf(translate.x, translate.y)
+      renderFrame(contentMatrix)
 
       transformScrollBar()
     }
@@ -287,8 +275,8 @@
       let translateY = -e.deltaY / contentMatrix.a
 
       let translate = translateBoundCheck(0, translateY)
-      let matrix = contentMatrix.translate(translate.x, translate.y)
-      renderFrame(matrix)
+      contentMatrix.translateSelf(translate.x, translate.y)
+      renderFrame(contentMatrix)
 
       transformScrollBar()
     }
@@ -329,8 +317,8 @@
       let translateY = deltaY * contentRect.height / verticalScrollRect.height
 
       let translate = translateBoundCheck(0, translateY)
-      let matrix = contentMatrix.translate(0, translate.y)
-      renderFrame(matrix)
+      contentMatrix.translateSelf(0, translate.y)
+      renderFrame(contentMatrix)
 
       verticalScrollPoint = { x: e.pageX, y: e.pageY }
       transformScrollBar()
@@ -349,8 +337,8 @@
       let translateX = deltaX * contentRect.width / horizontalScrollRect.width
 
       let translate = translateBoundCheck(translateX, 0)
-      let matrix = contentMatrix.translate(translate.x, 0)
-      renderFrame(matrix)
+      contentMatrix.translateSelf(translate.x, 0)
+      renderFrame(contentMatrix)
 
       horizontalScrollPoint = { x: e.pageX, y: e.pageY }
       transformScrollBar()
@@ -385,17 +373,16 @@
     }
 
 
-    function renderFrame(matrix, point) {
-      renderRects = getRenderRects(matrix, point)
-      contentMatrix = matrix
-
+    function renderFrame(matrix) {
       requestAnimationFrame(() => {
-        render(matrix, renderRects)
+        render(matrix)
       })
     }
 
 
-    function render(matrix, renderRects) {
+    function render(matrix) {
+      let renderRects = getRenderRects(matrix)
+
       ctx.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
       let output = []
       renderRects.forEach(renderRect => {
@@ -421,142 +408,42 @@
         // ctx.resetTransform()
         ctx.restore()
       })
+
       console.log(output)
     }
 
 
-    function getRenderRects(matrix, point) {
-      let inverseMatrix = matrix.inverse()
+    function getRenderRects(matrix) {
+      let renderRects = []
+
+      let inverseMatrix = contentMatrix.inverse()
       let transformViewBoxRect = viewBoxRect.matrixTransform(inverseMatrix)
+      // console.log(matrix.e, matrix.f)
+      // console.log(viewBoxRect.left, viewBoxRect.top, viewBoxRect.right, viewBoxRect.bottom)
       //基于matrix计算需要进行渲染的页面进行渲染
-
-      return matchRenderRects(matrix, transformViewBoxRect, point)
-    }
-
-
-    function matchRenderRects(matrix, viewBoxRect, point) {
-      //第一次渲染从0开始遍历匹配
-      let matchRects = []
       let isFound
-      if (true) {
-        // if (!renderRects || renderRects.length == 0) {
-        for (let i = 0; i < rects.length; i++) {
-          let rect = rects[i]
-          let isIntersect = checkIntersect(rect, viewBoxRect)
-          if (!isIntersect) {
-            //在当前视口外
-            if (isFound) {
-              break
-            }
-            continue
+      for (let i = 0; i < rects.length; i++) {
+        let rect = rects[i]
+        if (
+          rect.right < transformViewBoxRect.left ||
+          rect.bottom < transformViewBoxRect.top ||
+          rect.left > transformViewBoxRect.right ||
+          rect.top > transformViewBoxRect.bottom
+        ) {
+          //在当前视口外
+          if (isFound) {
+            break
           }
-          rect.index = i
-          matchRects.push(rect)
-          isFound = true
+          continue
         }
-        return matchRects
+
+        rect.index = i
+        renderRects.push(rect)
+        isFound = true
       }
-
-
-      //根据矩阵判断是否缩放
-      if (matrix.a != contentMatrix.a) {
-        //如果缩放，判断鼠标所在当前页。当前页一定还在viewbox中
-        //缩放前点所在索引
-
-        let containsRests = []
-        for (let i = 0; i < renderRects.length; i++) {
-          let rect = renderRects[i];
-          if (rect.contains(point)) {
-            containsRests.push(rect)
-            break
-          }
-          //在两页中间
-          if (point.y > rect.bottom && point.y < renderRects[i + 1]?.top) {
-            containsRests.push(rect)
-            containsRests.push(rects[i + 1])
-          }
-        }
-
-        console.log('当前', containsRests)
-
-        matchRects.push(...containsRests)
-        //向上寻找
-        for (let i = containsRests[0].index - 1; i >= 0; i--) {
-          let rect = rects[i];
-          let isIntersect = checkIntersect(rect, viewBoxRect)
-          if (!isIntersect) {
-            break
-          }
-          rect.index = i
-          matchRects.unshift(rect)
-        }
-
-        //向下寻找
-        for (let i = containsRests[containsRests.length - 1].index + 1; i < rects.length; i++) {
-          let rect = rects[i];
-          let isIntersect = checkIntersect(rect, viewBoxRect)
-          if (!isIntersect) {
-            break
-          }
-          rect.index = i
-          matchRects.push(rect)
-        }
-
-
-
-      } else {
-        //如果不缩放，根据矩阵y轴偏移的变化判断遍历方向
-        if (matrix.f < contentMatrix.f) {
-          //内容向上移动
-          for (let i = renderRects[0].index; i < rects.length; i++) {
-            let rect = rects[i];
-            let isIntersect = checkIntersect(rect, viewBoxRect)
-            if (!isIntersect) {
-              //在当前视口外
-              if (isFound) {
-                break
-              }
-              continue
-            }
-            rect.index = i
-            matchRects.push(rect)
-            isFound = true
-          }
-
-        } else if (matrix.f > contentMatrix.f) {
-          //内容向下移动
-          for (let i = renderRects[renderRects.length - 1].index; i >= 0; i--) {
-            let rect = rects[i];
-            let isIntersect = checkIntersect(rect, viewBoxRect)
-            if (!isIntersect) {
-              //在当前视口外
-              if (isFound) {
-                break
-              }
-              continue
-            }
-            rect.index = i
-            matchRects.unshift(rect)
-            isFound = true
-          }
-        } else {
-          matchRects = [...renderRects]
-        }
-
-      }
-      return matchRects
+      return renderRects
     }
 
-
-    function checkIntersect(rect1, rect2) {
-      if (rect1.right < rect2.left ||
-        rect1.bottom < rect2.top ||
-        rect1.left > rect2.right ||
-        rect1.top > rect2.bottom) {
-        return false
-      }
-      return true
-    }
   </script>
 
 </head>
