@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+  <style>
+    html,
+    body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+    }
+
+    /* 滚动槽 */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      border-radius: 4px;
+    }
+
+    /* 滚动条滑块 */
+    ::-webkit-scrollbar-thumb {
+      border-radius: 4px;
+      background: rgba(0, 0, 0, 0.25);
+    }
+
+    #wrapper {
+      height: 100%;
+      width: 100%;
+    }
+  </style>
+  <script src="./lib/pdf.js"></script>
+  <script src="./src/PDFRender.js"></script>
+  <script>
+    window.onload = () => {
+      initPdf()
+    }
+
+    async function initPdf() {
+      let startTime = Date.now()
+      // let pdfRender = await PDFRender.load('./public/mkl-2020-developer-reference-c-0.pdf')
+      let pdfRender = await PDFRender.load('./public/test.pdf')
+      console.log(Date.now() - startTime)
+      console.log(pdfRender)
+      let wrapper = document.getElementById('wrapper')
+      let dom = pdfRender.initDom(wrapper)
+      wrapper.append(dom)
+    }
+  </script>
+
+</head>
+
+<body>
+  <div id="wrapper"></div>
+</body>
+
+</html>

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    #wrapper {
+      height: 100%;
+      width: 100%;
+    }
+  </style>
+  <script src="../lib/pdf.js"></script>
+  <title>Document</title>
+
+
+  <script>
+    window.onload = () => {
+      console.log('init')
+      // parsePdf('./public/test.pdf')
+      parsePdf('./public/mkl-2020-developer-reference-c-0.pdf')
+    }
+
+    async function parsePdf(url) {
+      let startTime = Date.now()
+      let pdfDoc = await pdfjsLib.getDocument(url).promise
+      let pageInfos = new Array(pdfDoc.numPages)
+      let scale = 1
+      let getMetadata = await pdfDoc.getMetadata()
+      let getPageLabels = await pdfDoc.getPageLabels()
+      let getPageLayout = await pdfDoc.getPageLayout()
+      let getOptionalContentConfig = await pdfDoc.getOptionalContentConfig()
+      let getOutline = await pdfDoc.getOutline()
+      let docWidth = 0
+      for (let i = 1; i <= pageInfos.length; i++) {
+        let pdfPageProxy = await pdfDoc.getPage(i)
+        let viewport = pdfPageProxy.getViewport({ scale })
+
+        let left = 0
+        let top = pageInfos[i - 2] ? pageInfos[i - 2].top + pageInfos[i - 2].height + 10 : 0
+        let width = viewport.width
+        let height = viewport.height
+        docWidth = Math.max(docWidth, width)
+        pageInfos[i - 1] = ({ left, top, width, height })
+      }
+      console.log(Date.now() - startTime)
+
+      let docInfo = {
+        left: 0, top: 0,
+        width: docWidth,
+        height: pageInfos[pageInfos.length - 1].top + pageInfos[pageInfos.length - 1].height
+      }
+      console.log(docInfo)
+
+      let wrapper = document.getElementById('wrapper')
+      wrapper.style.height = `${docInfo.height}px`
+      wrapper.style.width = `${docInfo.width}px`
+    }
+
+    async function renderPDP(wrapperDom, url) {
+      let pdfDoc = await pdfjsLib.getDocument(url).promise
+      let numPages = pdfDoc.numPages
+      let scale = 1
+      let width
+      let height
+      for (let index = 1; index <= numPages; index++) {
+        let pdfPageProxy = await pdfDoc.getPage(index)
+        let viewport = pdfPageProxy.getViewport({ scale: 3 })
+        width = viewport.width
+        height = viewport.height
+        let canvas = document.createElement('canvas')
+        canvas.id = `canvas-${index}`
+        canvas.width = width
+        canvas.height = height
+
+        let renderContext = {
+          viewport: viewport,
+          canvasContext: canvas.getContext('2d'),
+        }
+
+        await pdfPageProxy.render(renderContext)
+        wrapperDom.append(canvas)
+      }
+    }
+  </script>
+</head>
+
+<body>
+  <div id="wrapper"></div>
+</body>
+
+</html>

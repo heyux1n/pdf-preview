@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0, user-scalable=no">
+  <title>Document</title>
+  <style>
+    html,
+    body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    #wrapper {
+      height: 100%;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    #content {
+      width: 100%;
+      height: 1600px;
+      border: 10px solid rosybrown;
+      box-sizing: border-box;
+      transform-origin: 0 0;
+    }
+
+    .scroll-bar {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      background-color: cadetblue;
+      opacity: 0.6;
+      user-select: none;
+    }
+
+    .scrollbar-thumb {
+      background-color: aliceblue;
+      user-select: none;
+    }
+
+    #horizontal-scroll {
+      height: 18px;
+      left: 0;
+    }
+
+    #horizontal-scroll-thumb {
+      height: 10px;
+      margin: 4px 0;
+    }
+
+    #vertical-scroll {
+      width: 18px;
+      top: 0;
+    }
+
+    #vertical-scroll-thumb {
+      width: 10px;
+      margin: 0 4px;
+    }
+  </style>
+  <script>
+    class RenderRect {
+      leftTopPoint
+      rightBottomPoint
+
+      constructor(x, y, width, height) {
+        this.leftTopPoint = new DOMPoint(x, y)
+        this.rightBottomPoint = new DOMPoint(x + width, y + height)
+      }
+
+      get top() {
+        return this.leftTopPoint.y
+      }
+
+      get left() {
+        return this.leftTopPoint.x
+      }
+
+
+      get right() {
+        return this.rightBottomPoint.x
+      }
+
+
+      get bottom() {
+        return this.rightBottomPoint.y
+      }
+
+      get width() {
+        return this.rightBottomPoint.x - this.leftTopPoint.x
+      }
+
+      get height() {
+        return this.rightBottomPoint.y - this.leftTopPoint.y
+      }
+
+
+      matrixTransform(matrix) {
+        let leftTopPoint = this.leftTopPoint.matrixTransform(matrix)
+        let rightBottomPoint = this.rightBottomPoint.matrixTransform(matrix)
+
+        return new RenderRect(leftTopPoint.x, leftTopPoint.y, rightBottomPoint.x - leftTopPoint.x, rightBottomPoint.y - leftTopPoint.y)
+      }
+
+    }
+  </script>
+  <script>
+    // let rects = [new RenderRect(50, 50, 1000, 500), new RenderRect(50, 600, 1000, 500), new RenderRect(50, 1150, 1000, 500)]
+    let rects = [new RenderRect(50, 50, 1000, 500)]
+    let contentMatrix = new DOMMatrix()
+    let isMouseHandle
+    let mousePoint = { x: 0, y: 0 }
+    let viewBoxRect
+    let contentRect
+    let ctx
+
+    let verticalScrollMatrix = new DOMMatrix()
+    let horizontalScrollMatrix = new DOMMatrix()
+
+    let verticalScrollRect
+    let horizontalScrollRect
+
+    let verticalScroll
+    let horizontalScroll
+    let verticalScrollThumb
+    let horizontalScrollThumb
+
+    let isVerticalScroll
+    let verticalScrollPoint
+    let isHorizontalScroll
+    let horizontalScrollPoint
+
+
+    onload = () => {
+      let wrapper = document.getElementById('wrapper')
+      let width = wrapper.clientWidth
+      let height = wrapper.clientHeight
+
+      let canvas = document.getElementById('canvas')
+      canvas.style.width = `${width}px`
+      canvas.style.height = `${height}px`
+      canvas.width = width
+      canvas.height = height
+      viewBoxRect = new RenderRect(0, 0, width, height)
+
+      ctx = canvas.getContext('2d')
+
+      let contentRectWidth = 0
+      let contentRectHeight = rects[rects.length - 1].bottom
+      for (let i = 0; i < rects.length; i++) {
+        let rect = rects[i];
+        contentRectWidth = Math.max(contentRectWidth, Math.abs(rect.left) + rect.width)
+      }
+      contentRect = new RenderRect(0, 0, contentRectWidth, contentRectHeight)
+
+
+      verticalScroll = document.getElementById('vertical-scroll')
+      verticalScrollThumb = document.getElementById('vertical-scroll-thumb')
+      verticalScrollRect = new RenderRect(0, 0, verticalScroll.clientWidth, verticalScroll.clientHeight)
+
+      horizontalScroll = document.getElementById('horizontal-scroll')
+      horizontalScrollThumb = document.getElementById('horizontal-scroll-thumb')
+      horizontalScrollRect = new RenderRect(0, 0, horizontalScroll.clientWidth, horizontalScroll.clientHeight)
+
+      document.addEventListener('mousemove', e => {
+        verticalMousemove(e)
+        horizontalMousemove(e)
+        contentMousemove(e)
+      })
+
+      document.addEventListener('mouseup', () => {
+        isMouseHandle = false
+        isVerticalScroll = false
+        isHorizontalScroll = false
+      })
+
+      updateScrollBarSize()
+      renderFrame(contentMatrix)
+    }
+
+
+
+    function mousedown(e) {
+      isMouseHandle = true
+      mouseStratPoint = new DOMPoint(e.pageX, e.pageY)
+    }
+
+    function contentMousemove(e) {
+      if (!isMouseHandle) {
+        return
+      }
+
+      let inverseMatrix = contentMatrix.inverse()
+      let p1 = new DOMPoint(e.pageX, e.pageY).matrixTransform(inverseMatrix)
+      let p2 = mouseStratPoint.matrixTransform(inverseMatrix)
+      let translateX = p1.x - p2.x
+      let translateY = p1.y - p2.y
+
+      let translate = translateBoundCheck(translateX, translateY)
+      contentMatrix.translateSelf(translate.x, translate.y)
+      renderFrame(contentMatrix)
+      mouseStratPoint = new DOMPoint(e.pageX, e.pageY)
+
+      transformScrollBar()
+    }
+
+
+    function dblclick(e) {
+      let scale = 1.5
+
+      scaleContent(e.offsetX, e.offsetY, scale)
+    }
+
+
+    function mousewheel(e) {
+      event.preventDefault()
+      if (e.ctrlKey) {
+        let scale
+        if (e.deltaY > 0) {
+          scale = 0.8
+        } else {
+          scale = 1.2
+        }
+        scaleContent(e.offsetX, e.offsetY, scale)
+      } else if (e.shiftKey) {
+        scrollHorizontalContent(e)
+      } else {
+        scrollVerticalContent(e)
+      }
+    }
+
+    function scaleContent(x, y, scale) {
+      let inverseMatrix = contentMatrix.inverse()
+      //以viewBox作为坐标系计算点击点在viewBox坐标系下的坐标
+      let point = new DOMPoint(x, y).matrixTransform(inverseMatrix)
+      //将原点origin(0, 0)移动到指定点进行缩放，缩放完成后再位移到该点
+      let transformMatrix = DOMMatrix.fromMatrix(contentMatrix)
+      transformMatrix.translateSelf(point.x, point.y)
+      transformMatrix.scaleSelf(scale)
+      transformMatrix.translateSelf(-point.x, -point.y)
+
+      contentMatrix.scaleSelf(scale)
+      let deltaX = (transformMatrix.e - contentMatrix.e) / transformMatrix.a
+      let deltaY = (transformMatrix.f - contentMatrix.f) / transformMatrix.d
+      let translate = translateBoundCheck(deltaX, deltaY)
+      contentMatrix.translateSelf(translate.x, translate.y)
+
+      renderFrame(contentMatrix)
+      updateScrollBarSize()
+      transformScrollBar()
+    }
+
+
+
+    function scrollHorizontalContent(e) {
+      let translateX = -e.deltaY / contentMatrix.a
+
+      let translate = translateBoundCheck(translateX, 0)
+      contentMatrix.translateSelf(translate.x, translate.y)
+      renderFrame(contentMatrix)
+
+      transformScrollBar()
+    }
+
+    function scrollVerticalContent(e) {
+      let translateY = -e.deltaY / contentMatrix.a
+
+      let translate = translateBoundCheck(0, translateY)
+      contentMatrix.translateSelf(translate.x, translate.y)
+      renderFrame(contentMatrix)
+
+      transformScrollBar()
+    }
+
+
+    function updateScrollBarSize() {
+      let curContentRect = contentRect.matrixTransform(contentMatrix)
+      let verticalHeight = viewBoxRect.height * verticalScrollRect.height / curContentRect.height
+      verticalScrollThumb.style.height = `${verticalHeight}px`
+      let horizontalWidth = viewBoxRect.width * horizontalScrollRect.width / curContentRect.width
+      horizontalScrollThumb.style.width = `${horizontalWidth}px`
+    }
+
+
+    function transformScrollBar() {
+      //滚动条变换矩阵
+      let translateY = (contentMatrix.f / contentMatrix.d) * verticalScrollRect.height / contentRect.height
+      let verticalScrollMatrix = new DOMMatrix().translateSelf(0, -translateY)
+      verticalScrollThumb.style.transform = verticalScrollMatrix.toString()
+
+      let translateX = (contentMatrix.e / contentMatrix.a) * horizontalScrollRect.width / contentRect.width
+      let horizontalScrollMatrix = new DOMMatrix().translateSelf(-translateX, 0)
+      horizontalScrollThumb.style.transform = horizontalScrollMatrix.toString()
+    }
+
+
+
+    function verticalmousedown(e) {
+      isVerticalScroll = true
+      verticalScrollPoint = { x: e.pageX, y: e.pageY }
+    }
+
+    function verticalMousemove(e) {
+      if (!isVerticalScroll) {
+        return
+      }
+      let deltaY = verticalScrollPoint.y - e.pageY
+      let translateY = deltaY * contentRect.height / verticalScrollRect.height
+
+      let translate = translateBoundCheck(0, translateY)
+      contentMatrix.translateSelf(0, translate.y)
+      renderFrame(contentMatrix)
+
+      verticalScrollPoint = { x: e.pageX, y: e.pageY }
+      transformScrollBar()
+    }
+
+    function horizontalmousedown(e) {
+      isHorizontalScroll = true
+      horizontalScrollPoint = { x: e.pageX, y: e.pageY }
+    }
+
+    function horizontalMousemove(e) {
+      if (!isHorizontalScroll) {
+        return
+      }
+      let deltaX = horizontalScrollPoint.x - e.pageX
+      let translateX = deltaX * contentRect.width / horizontalScrollRect.width
+
+      let translate = translateBoundCheck(translateX, 0)
+      contentMatrix.translateSelf(translate.x, 0)
+      renderFrame(contentMatrix)
+
+      horizontalScrollPoint = { x: e.pageX, y: e.pageY }
+      transformScrollBar()
+    }
+
+
+    /** 
+     *  检查matrix矩阵下需要可进行位移边界
+     **/
+    function translateBoundCheck(x, y, matrix = contentMatrix) {
+      let curContentRect = contentRect.matrixTransform(matrix)
+      if (x < 0 && curContentRect.right > viewBoxRect.right) {
+        //向左变换
+        let bound = viewBoxRect.right - curContentRect.right
+        x = Math.max(x, bound)
+      } else if (x > 0 && curContentRect.left < 0) {
+        x = Math.min(x, - curContentRect.left)
+      } else {
+        x = 0
+      }
+
+      if (y < 0 && curContentRect.bottom > viewBoxRect.bottom) {
+        let bound = viewBoxRect.bottom - curContentRect.bottom
+        y = Math.max(y, bound)
+      } else if (y > 0 && curContentRect.top < 0) {
+        y = Math.min(y, - curContentRect.top)
+      } else {
+        y = 0
+      }
+
+      return { x, y }
+    }
+
+
+    function renderFrame(matrix) {
+      requestAnimationFrame(() => {
+        render(matrix)
+      })
+    }
+
+
+    function render(matrix) {
+      let renderRects = getRenderRects(matrix)
+
+      ctx.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
+      let output = []
+      renderRects.forEach(renderRect => {
+        ctx.save()
+        ctx.beginPath()
+        ctx.lineWidth = renderRect.index == 0 ? 10 : renderRect.index == 1 ? 20 : 30
+        ctx.fillStyle = renderRect.index == 0 ? 'red' : renderRect.index == 1 ? 'blue' : 'green'
+        ctx.strokeStyle = renderRect.index == 0 ? 'red' : renderRect.index == 1 ? 'blue' : 'green'
+
+        let renderRectMatrix = DOMMatrix.fromMatrix(matrix)
+        let transformMaxtrx = renderRectMatrix.translateSelf(renderRect.left, renderRect.top)
+
+        output.push({ index: renderRect.index, matrix: transformMaxtrx })
+        ctx.transform(transformMaxtrx.a, transformMaxtrx.b, transformMaxtrx.c, transformMaxtrx.d, transformMaxtrx.e, transformMaxtrx.f)
+        ctx.rect(0, 0, renderRect.width, renderRect.height)
+        if (renderRect.index == 0) {
+          ctx.stroke()
+        } else {
+          ctx.fill()
+        }
+
+        // ctx.resetTransform()
+        ctx.restore()
+      })
+
+      console.log(output)
+    }
+
+
+    function getRenderRects(matrix) {
+      let renderRects = []
+
+      let inverseMatrix = contentMatrix.inverse()
+      let transformViewBoxRect = viewBoxRect.matrixTransform(inverseMatrix)
+      // console.log(matrix.e, matrix.f)
+      // console.log(viewBoxRect.left, viewBoxRect.top, viewBoxRect.right, viewBoxRect.bottom)
+      //基于matrix计算需要进行渲染的页面进行渲染
+      let isFound
+      for (let i = 0; i < rects.length; i++) {
+        let rect = rects[i]
+        if (
+          rect.right < transformViewBoxRect.left ||
+          rect.bottom < transformViewBoxRect.top ||
+          rect.left > transformViewBoxRect.right ||
+          rect.top > transformViewBoxRect.bottom
+        ) {
+          //在当前视口外
+          if (isFound) {
+            break
+          }
+          continue
+        }
+
+        rect.index = i
+        renderRects.push(rect)
+        isFound = true
+      }
+      return renderRects
+    }
+
+  </script>
+
+</head>
+
+<body>
+  <div id="wrapper" onmousedown="mousedown(event)" ondblclick="dblclick(event)" onmousewheel="mousewheel(event)">
+    <canvas id="canvas" />
+  </div>
+  <div id="horizontal-scroll" class="scroll-bar">
+    <div id="horizontal-scroll-thumb" class="scrollbar-thumb" onmousedown="horizontalmousedown(event)"></div>
+  </div>
+  <div id="vertical-scroll" class="scroll-bar">
+    <div id="vertical-scroll-thumb" class="scrollbar-thumb" onmousedown="verticalmousedown(event)"></div>
+  </div>
+</body>
+
+</html>
