@@ -31,6 +31,8 @@
   </style>
   <script>
     let ctx
+    let pdfPageProxy
+
     onload = () => {
       let wrapper = document.getElementById('wrapper')
       let canvas = document.getElementById('canvas')
@@ -46,40 +48,86 @@
       let pdfDoc = await pdfjsLib.getDocument(url).promise
       let numPages = pdfDoc.numPages
       let scale = 1
-      let pdfPageProxy = await pdfDoc.getPage(1)
+      pdfPageProxy = await pdfDoc.getPage(4)
       let viewport
       viewport = pdfPageProxy.getViewport({ scale })
 
-      let transform = [1, 0, 0, 1, 0, 0]
+      let transform = [1, 0, 0, 1, 600, 720]
+      let renderContext
+      let startTime
 
-      let renderContext = {
+      ctx.save()
+      renderContext = {
+        viewport: viewport,
+        canvasContext: ctx
+      }
+      startTime = Date.now()
+      await pdfPageProxy.render(renderContext).promise
+      ctx.restore()
+
+
+
+
+      ctx.save()
+      renderContext = {
+        viewport: viewport,
+        canvasContext: ctx
+      }
+      startTime = Date.now()
+      await renderTest(renderContext)
+      let defaultTime = Date.now() - startTime
+      ctx.restore()
+
+      canvas.width = canvas.width
+
+      //ctx  transform
+      ctx.save()
+      ctx.transform(transform[0], transform[1], transform[2], transform[3], transform[4], transform[5])
+      startTime = Date.now()
+      await renderTest(renderContext)
+      let ctxTime = Date.now() - startTime
+      ctx.restore()
+
+      canvas.width = canvas.width
+
+
+      //pdfjs transform
+      ctx.save()
+      renderContext = {
         viewport: viewport,
         canvasContext: ctx,
         transform,
-        background: 'red'
       }
-
-
-
-      ctx.save()
-      ctx.beginPath()
-      ctx.strokeStyle = 'red'
-      ctx.rect(0, 0, 300, 300)
-      ctx.fill()
+      startTime = Date.now()
+      await renderTest(renderContext)
+      let pdfjsTime = Date.now() - startTime
       ctx.restore()
 
-      ctx.globalCompositeOperation = 'destination-over'
-      await pdfPageProxy.render(renderContext).promise
+      canvas.width = canvas.width
 
-      ctx.globalCompositeOperation = 'source-over'
+
+      //clip transform
       ctx.save()
-      ctx.beginPath()
-      ctx.rect(300, 300, 600, 600)
-      ctx.fill()
+      let clipPath = new Path2D()
+      clipPath.rect(0, 0, canvas.width, canvas.height)
+      let transformClipPath = new Path2D()
+      transformClipPath.addPath(clipPath, new DOMMatrix(transform))
+      ctx.clip(transformClipPath, 'nonzero')
+      startTime = Date.now()
+      await renderTest(renderContext)
+      let clipTime = Date.now() - startTime
       ctx.restore()
 
+
+      console.log({ defaultTime, ctxTime, pdfjsTime, clipTime })
     }
 
+
+    async function renderTest(renderContext) {
+      for (let i = 0; i < 100; i++) {
+        await pdfPageProxy.render(renderContext).promise
+      }
+    }
 
   </script>
 

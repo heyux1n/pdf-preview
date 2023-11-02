@@ -42,6 +42,7 @@
       user-select: none;
     }
 
+
     #horizontal-scroll {
       height: 18px;
       left: 0;
@@ -62,6 +63,7 @@
       margin: 0 4px;
     }
   </style>
+  <script src="./lib/pdf.js"></script>
   <script>
     class RenderRect {
       leftTopPoint
@@ -106,10 +108,34 @@
         return new RenderRect(leftTopPoint.x, leftTopPoint.y, rightBottomPoint.x - leftTopPoint.x, rightBottomPoint.y - leftTopPoint.y)
       }
 
+
+      contains(point) {
+        if (this.right < point.x ||
+          this.bottom < point.y ||
+          this.left > point.x ||
+          this.top > point.y) {
+          return false
+        }
+        return true
+      }
+
+    }
+
+    class FrameTask {
+      matrix
+      renderRects
+
+      constructor(matrix, renderRects) {
+        this.matrix = matrix
+        this.renderRects = renderRects
+      }
     }
   </script>
   <script>
-    let rects = [new RenderRect(50, 50, 1000, 500), new RenderRect(50, 600, 1000, 500), new RenderRect(50, 1150, 1000, 500)]
+    const PAGE_MARGIN_BOTTOM = 10
+    let scale = 1
+
+    let rects = []
     let contentMatrix = new DOMMatrix()
     let isMouseHandle
     let mousePoint = { x: 0, y: 0 }
@@ -133,38 +159,55 @@
     let isHorizontalScroll
     let horizontalScrollPoint
 
+    let renderRects
+
+
+    let contentRectWidth = 0
+    let pdfDocumentProxy
+
+
+    let isRenderingFrame = false
+    let renderingframeTask
 
     onload = () => {
+      initViewbox()
+
+      initContent()
+
+      addGlobalListener()
+      initScrollBar()
+
+    }
+
+
+    function initViewbox() {
       let wrapper = document.getElementById('wrapper')
       let width = wrapper.clientWidth
       let height = wrapper.clientHeight
-
+      //初始化viewbox
       let canvas = document.getElementById('canvas')
       canvas.style.width = `${width}px`
       canvas.style.height = `${height}px`
       canvas.width = width
       canvas.height = height
       viewBoxRect = new RenderRect(0, 0, width, height)
-
       ctx = canvas.getContext('2d')
+    }
 
-      let contentRectWidth = 0
-      let contentRectHeight = rects[rects.length - 1].bottom
-      for (let i = 0; i < rects.length; i++) {
-        let rect = rects[i];
-        contentRectWidth = Math.max(contentRectWidth, Math.abs(rect.left) + rect.width)
-      }
-      contentRect = new RenderRect(0, 0, contentRectWidth, contentRectHeight)
+    function initContent() {
+      // loadPDF('./public/word.pdf').then(() => {
+      loadPDF('./public/test.pdf').then(() => {
+        //初始化内容信息
+        let contentRectHeight = rects[rects.length - 1].bottom
+        contentRect = new RenderRect(0, 0, contentRectWidth, contentRectHeight)
+
+        updateScrollBarSize()
+        renderFrame(contentMatrix)
+      })
+    }
 
 
-      verticalScroll = document.getElementById('vertical-scroll')
-      verticalScrollThumb = document.getElementById('vertical-scroll-thumb')
-      verticalScrollRect = new RenderRect(0, 0, verticalScroll.clientWidth, verticalScroll.clientHeight)
-
-      horizontalScroll = document.getElementById('horizontal-scroll')
-      horizontalScrollThumb = document.getElementById('horizontal-scroll-thumb')
-      horizontalScrollRect = new RenderRect(0, 0, horizontalScroll.clientWidth, horizontalScroll.clientHeight)
-
+    function addGlobalListener() {
       document.addEventListener('mousemove', e => {
         verticalMousemove(e)
         horizontalMousemove(e)
@@ -176,16 +219,46 @@
         isVerticalScroll = false
         isHorizontalScroll = false
       })
-
-      updateScrollBarSize()
-      renderFrame(contentMatrix)
     }
 
+
+    function initScrollBar() {
+      verticalScroll = document.getElementById('vertical-scroll')
+      verticalScrollThumb = document.getElementById('vertical-scroll-thumb')
+      verticalScrollRect = new RenderRect(0, 0, verticalScroll.clientWidth, verticalScroll.clientHeight)
+
+      horizontalScroll = document.getElementById('horizontal-scroll')
+      horizontalScrollThumb = document.getElementById('horizontal-scroll-thumb')
+      horizontalScrollRect = new RenderRect(0, 0, horizontalScroll.clientWidth, horizontalScroll.clientHeight)
+    }
+
+
+    async function loadPDF(url) {
+      pdfDocumentProxy = await pdfjsLib.getDocument(url).promise
+      rects = new Array(pdfDocumentProxy.numPages)
+      let PDFWidth = 0
+      for (let i = 0; i < rects.length; i++) {
+        let pdfPageProxy = await pdfDocumentProxy.getPage(i + 1)
+        let viewport = pdfPageProxy.getViewport({ scale })
+
+        let left = 0
+        let top = rects[i - 1] ? rects[i - 1].bottom + PAGE_MARGIN_BOTTOM : 0
+        let right = viewport.width
+        let bottom = top + viewport.height
+        let width = viewport.width
+        let height = viewport.height
+
+        contentRectWidth = Math.max(contentRectWidth, Math.abs(left) + width)
+        let rect = new RenderRect(left, top, width, height)
+        rects[i] = rect
+      }
+
+    }
 
 
     function mousedown(e) {
       isMouseHandle = true
-      mouseStratPoint = { x: e.pageX, y: e.pageY }
+      mouseStratPoint = new DOMPoint(e.pageX, e.pageY)
     }
 
     function contentMousemove(e) {
@@ -193,13 +266,16 @@
         return
       }
 
-      let translateX = e.pageX - mouseStratPoint.x
-      let translateY = e.pageY - mouseStratPoint.y
+      let inverseMatrix = contentMatrix.inverse()
+      let p1 = new DOMPoint(e.pageX, e.pageY).matrixTransform(inverseMatrix)
+      let p2 = mouseStratPoint.matrixTransform(inverseMatrix)
+      let translateX = p1.x - p2.x
+      let translateY = p1.y - p2.y
 
       let translate = translateBoundCheck(translateX, translateY)
-      contentMatrix.translateSelf(translate.x, translate.y)
-      renderFrame(contentMatrix)
-      mouseStratPoint = { x: e.pageX, y: e.pageY }
+      let matrix = contentMatrix.translate(translate.x, translate.y)
+      renderFrame(matrix)
+      mouseStratPoint = new DOMPoint(e.pageX, e.pageY)
 
       transformScrollBar()
     }
@@ -231,18 +307,21 @@
 
     function scaleContent(x, y, scale) {
       let inverseMatrix = contentMatrix.inverse()
+      //以viewBox作为坐标系计算点击点在viewBox坐标系下的坐标
       let point = new DOMPoint(x, y).matrixTransform(inverseMatrix)
-      let transformMatrix = new DOMMatrix()
+      //将原点origin(0, 0)移动到指定点进行缩放，缩放完成后再位移到该点
+      let transformMatrix = DOMMatrix.fromMatrix(contentMatrix)
       transformMatrix.translateSelf(point.x, point.y)
       transformMatrix.scaleSelf(scale)
       transformMatrix.translateSelf(-point.x, -point.y)
 
-      //缩放位置不够时需要进行translate
-      let translate = translateBoundCheck(transformMatrix.e, transformMatrix.f)
-      contentMatrix.translateSelf(translate.x, translate.y)
-      contentMatrix.scaleSelf(scale)
+      let matrix = contentMatrix.scale(scale)
+      let deltaX = (transformMatrix.e - matrix.e) / transformMatrix.a
+      let deltaY = (transformMatrix.f - matrix.f) / transformMatrix.d
+      let translate = translateBoundCheck(deltaX, deltaY, matrix)
+      matrix.translateSelf(translate.x, translate.y)
 
-      renderFrame(contentMatrix)
+      renderFrame(matrix, point)
       updateScrollBarSize()
       transformScrollBar()
     }
@@ -253,8 +332,8 @@
       let translateX = -e.deltaY / contentMatrix.a
 
       let translate = translateBoundCheck(translateX, 0)
-      contentMatrix.translateSelf(translate.x, translate.y)
-      renderFrame(contentMatrix)
+      let matrix = contentMatrix.translate(translate.x, translate.y)
+      renderFrame(matrix)
 
       transformScrollBar()
     }
@@ -263,8 +342,8 @@
       let translateY = -e.deltaY / contentMatrix.a
 
       let translate = translateBoundCheck(0, translateY)
-      contentMatrix.translateSelf(translate.x, translate.y)
-      renderFrame(contentMatrix)
+      let matrix = contentMatrix.translate(translate.x, translate.y)
+      renderFrame(matrix)
 
       transformScrollBar()
     }
@@ -301,13 +380,12 @@
       if (!isVerticalScroll) {
         return
       }
-      let curContentRect = contentRect.matrixTransform(contentMatrix)
       let deltaY = verticalScrollPoint.y - e.pageY
-      let translateY = deltaY * curContentRect.height / verticalScrollRect.height
+      let translateY = deltaY * contentRect.height / verticalScrollRect.height
 
       let translate = translateBoundCheck(0, translateY)
-      contentMatrix.translateSelf(0, translate.y)
-      renderFrame(contentMatrix)
+      let matrix = contentMatrix.translate(0, translate.y)
+      renderFrame(matrix)
 
       verticalScrollPoint = { x: e.pageX, y: e.pageY }
       transformScrollBar()
@@ -322,21 +400,23 @@
       if (!isHorizontalScroll) {
         return
       }
-      let curContentRect = contentRect.matrixTransform(contentMatrix)
       let deltaX = horizontalScrollPoint.x - e.pageX
-      let translateX = deltaX * curContentRect.width / horizontalScrollRect.width
+      let translateX = deltaX * contentRect.width / horizontalScrollRect.width
 
       let translate = translateBoundCheck(translateX, 0)
-      contentMatrix.translateSelf(translate.x, 0)
-      renderFrame(contentMatrix)
+      let matrix = contentMatrix.translate(translate.x, 0)
+      renderFrame(matrix)
 
       horizontalScrollPoint = { x: e.pageX, y: e.pageY }
       transformScrollBar()
     }
 
 
-    function translateBoundCheck(x, y) {
-      let curContentRect = contentRect.matrixTransform(contentMatrix)
+    /** 
+     *  检查matrix矩阵下需要可进行位移边界
+     **/
+    function translateBoundCheck(x, y, matrix = contentMatrix) {
+      let curContentRect = contentRect.matrixTransform(matrix)
       if (x < 0 && curContentRect.right > viewBoxRect.right) {
         //向左变换
         let bound = viewBoxRect.right - curContentRect.right
@@ -356,36 +436,38 @@
         y = 0
       }
 
-      return { x: x / contentMatrix.a, y: y / contentMatrix.d }
+      return { x, y }
     }
 
 
-    function renderFrame(matrix) {
-      requestAnimationFrame(() => {
-        render(matrix)
-      })
+    function renderFrame(matrix, point) {
+      let rects = getRenderRects(matrix, point)
+      contentMatrix = matrix
+
+      let frameTask = new FrameTask(DOMMatrix.fromMatrix(matrix), rects)
+      render(frameTask)
     }
 
 
-    function render(matrix) {
-      let renderRects = getRenderRects(matrix)
 
+    function render1(frameTask) {
       ctx.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
       let output = []
-      renderRects.forEach(renderRect => {
+      frameTask.renderRects.forEach(renderRect => {
         ctx.save()
         ctx.beginPath()
-        ctx.lineWidth = renderRect.index == 0 ? 10 : renderRect.index == 1 ? 20 : 30
-        ctx.fillStyle = renderRect.index == 0 ? 'red' : renderRect.index == 1 ? 'blue' : 'green'
-        ctx.strokeStyle = renderRect.index == 0 ? 'red' : renderRect.index == 1 ? 'blue' : 'green'
+        let type = renderRect.index % 3
+        ctx.lineWidth = type == 0 ? 10 : type == 1 ? 20 : 30
+        ctx.fillStyle = type == 0 ? 'red' : type == 1 ? 'blue' : 'green'
+        ctx.strokeStyle = type == 0 ? 'red' : type == 1 ? 'blue' : 'green'
 
-        let renderRectMatrix = DOMMatrix.fromMatrix(matrix)
+        let renderRectMatrix = DOMMatrix.fromMatrix(frameTask.matrix)
         let transformMaxtrx = renderRectMatrix.translateSelf(renderRect.left, renderRect.top)
 
         output.push({ index: renderRect.index, matrix: transformMaxtrx })
         ctx.transform(transformMaxtrx.a, transformMaxtrx.b, transformMaxtrx.c, transformMaxtrx.d, transformMaxtrx.e, transformMaxtrx.f)
         ctx.rect(0, 0, renderRect.width, renderRect.height)
-        if (renderRect.index == 0) {
+        if (type == 0) {
           ctx.stroke()
         } else {
           ctx.fill()
@@ -394,42 +476,194 @@
         // ctx.resetTransform()
         ctx.restore()
       })
-
       console.log(output)
     }
 
 
-    function getRenderRects(matrix) {
-      let renderRects = []
-
-      let inverseMatrix = contentMatrix.inverse()
-      let transformViewBoxRect = viewBoxRect.matrixTransform(inverseMatrix)
-      // console.log(matrix.e, matrix.f)
-      // console.log(viewBoxRect.left, viewBoxRect.top, viewBoxRect.right, viewBoxRect.bottom)
-      //基于matrix计算需要进行渲染的页面进行渲染
-      let isFound
-      for (let i = 0; i < rects.length; i++) {
-        let rect = rects[i]
-        if (
-          rect.right < transformViewBoxRect.left ||
-          rect.bottom < transformViewBoxRect.top ||
-          rect.left > transformViewBoxRect.right ||
-          rect.top > transformViewBoxRect.bottom
-        ) {
-          //在当前视口外
-          if (isFound) {
-            break
-          }
-          continue
-        }
-
-        rect.index = i
-        renderRects.push(rect)
-        isFound = true
+    async function render(frameTask) {
+      if (isRenderingFrame) {
+        renderingframeTask = frameTask
+        return
       }
-      return renderRects
+      isRenderingFrame = true
+
+      await renderPDFFrame(frameTask)
+      isRenderingFrame = false
+      if (renderingframeTask) {
+        render(renderingframeTask)
+        renderingframeTask = null
+      }
     }
 
+
+    async function renderPDFFrame(frameTask) {
+      ctx.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
+      // ctx.save()
+      // ctx.fillStyle = 'white'
+      // ctx.fillStyle = 'cornflowerblue'
+      // ctx.fillRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
+      // ctx.restore()
+      for (let i = 0; i < frameTask.renderRects.length; i++) {
+        let renderRect = frameTask.renderRects[i]
+        console.log(frameTask)
+        await renderPDFPage(frameTask.matrix, renderRect)
+      }
+    }
+
+    async function renderPDFPage(matrix, renderRect) {
+      ctx.save()
+      let pageINdex = renderRect.index + 1
+      let pdfPageProxy = await pdfDocumentProxy.getPage(pageINdex)
+      let viewport = pdfPageProxy.getViewport({ scale })
+      let transform = matrix.translate(renderRect.left, renderRect.top)
+
+      ctx.transform(transform.a, transform.b, transform.c, transform.d, transform.e, transform.f)
+
+      let background = 'rgba(0, 0, 0, 0)'
+      let renderContext = {
+        viewport,
+        canvasContext: ctx,
+        // transform: [transform.a, transform.b, transform.c, transform.d, transform.e, transform.f],
+        // background
+      }
+      let renderTask = pdfPageProxy.render(renderContext)
+      await renderTask.promise
+      ctx.restore()
+    }
+
+
+    function getRenderRects(matrix, point) {
+      let inverseMatrix = matrix.inverse()
+      let transformViewBoxRect = viewBoxRect.matrixTransform(inverseMatrix)
+      //基于matrix计算需要进行渲染的页面进行渲染
+
+      return matchRenderRects(matrix, transformViewBoxRect, point)
+    }
+
+
+    function matchRenderRects(matrix, viewBoxRect, point) {
+      //第一次渲染从0开始遍历匹配
+      let matchRects = []
+      let isFound
+      if (true) {
+        // if (!renderRects || renderRects.length == 0) {
+        for (let i = 0; i < rects.length; i++) {
+          let rect = rects[i]
+          let isIntersect = checkIntersect(rect, viewBoxRect)
+          if (!isIntersect) {
+            //在当前视口外
+            if (isFound) {
+              break
+            }
+            continue
+          }
+          rect.index = i
+          matchRects.push(rect)
+          isFound = true
+        }
+        return matchRects
+      }
+
+
+      //根据矩阵判断是否缩放
+      if (matrix.a != contentMatrix.a) {
+        //如果缩放，判断鼠标所在当前页。当前页一定还在viewbox中
+        //缩放前点所在索引
+
+        let containsRests = []
+        for (let i = 0; i < renderRects.length; i++) {
+          let rect = renderRects[i];
+          if (rect.contains(point)) {
+            containsRests.push(rect)
+            break
+          }
+          //在两页中间
+          if (point.y > rect.bottom && point.y < renderRects[i + 1]?.top) {
+            containsRests.push(rect)
+            containsRests.push(rects[i + 1])
+          }
+        }
+
+        console.log('当前', containsRests)
+
+        matchRects.push(...containsRests)
+        //向上寻找
+        for (let i = containsRests[0].index - 1; i >= 0; i--) {
+          let rect = rects[i];
+          let isIntersect = checkIntersect(rect, viewBoxRect)
+          if (!isIntersect) {
+            break
+          }
+          rect.index = i
+          matchRects.unshift(rect)
+        }
+
+        //向下寻找
+        for (let i = containsRests[containsRests.length - 1].index + 1; i < rects.length; i++) {
+          let rect = rects[i];
+          let isIntersect = checkIntersect(rect, viewBoxRect)
+          if (!isIntersect) {
+            break
+          }
+          rect.index = i
+          matchRects.push(rect)
+        }
+
+
+
+      } else {
+        //如果不缩放，根据矩阵y轴偏移的变化判断遍历方向
+        if (matrix.f < contentMatrix.f) {
+          //内容向上移动
+          for (let i = renderRects[0].index; i < rects.length; i++) {
+            let rect = rects[i];
+            let isIntersect = checkIntersect(rect, viewBoxRect)
+            if (!isIntersect) {
+              //在当前视口外
+              if (isFound) {
+                break
+              }
+              continue
+            }
+            rect.index = i
+            matchRects.push(rect)
+            isFound = true
+          }
+
+        } else if (matrix.f > contentMatrix.f) {
+          //内容向下移动
+          for (let i = renderRects[renderRects.length - 1].index; i >= 0; i--) {
+            let rect = rects[i];
+            let isIntersect = checkIntersect(rect, viewBoxRect)
+            if (!isIntersect) {
+              //在当前视口外
+              if (isFound) {
+                break
+              }
+              continue
+            }
+            rect.index = i
+            matchRects.unshift(rect)
+            isFound = true
+          }
+        } else {
+          matchRects = [...renderRects]
+        }
+
+      }
+      return matchRects
+    }
+
+
+    function checkIntersect(rect1, rect2) {
+      if (rect1.right < rect2.left ||
+        rect1.bottom < rect2.top ||
+        rect1.left > rect2.right ||
+        rect1.top > rect2.bottom) {
+        return false
+      }
+      return true
+    }
   </script>
 
 </head>
