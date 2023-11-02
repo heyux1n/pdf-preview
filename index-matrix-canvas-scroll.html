@@ -120,13 +120,10 @@
     }
   </script>
   <script>
-    let rects = [new RenderRect(50, 50, 1000, 500), new RenderRect(50, 600, 1000, 500),
-    new RenderRect(50, 1150, 1000, 500), new RenderRect(50, 1700, 1000, 500),
-    new RenderRect(50, 2250, 1000, 500), new RenderRect(50, 2800, 1000, 500),
-    new RenderRect(50, 3350, 1000, 500), new RenderRect(50, 3900, 1000, 500),
-    new RenderRect(50, 4450, 1000, 500), new RenderRect(50, 5000, 1000, 500)]
-    // let rects = [new RenderRect(50, 50, 1000, 500), new RenderRect(50, 600, 1000, 500), new RenderRect(50, 1150, 1000, 500)]
-    // let rects = [new RenderRect(50, 50, 1000, 500)]
+    const ScrollThumbMinSize = 30
+    const PAGE_MARGIN_BOTTOM = 20
+
+    let rects = []
     let contentMatrix = new DOMMatrix()
     let isMouseHandle
     let mousePoint = { x: 0, y: 0 }
@@ -144,6 +141,11 @@
     let horizontalScroll
     let verticalScrollThumb
     let horizontalScrollThumb
+    let verticalThumbHeight
+    let horizontalThumbWidth
+
+    let verticalContentRatio
+    let horizontalComtentRatio
 
     let isVerticalScroll
     let verticalScrollPoint
@@ -153,6 +155,8 @@
     let renderRects
 
     onload = () => {
+      initRects()
+
       let wrapper = document.getElementById('wrapper')
       let width = wrapper.clientWidth
       let height = wrapper.clientHeight
@@ -199,6 +203,18 @@
       renderFrame(contentMatrix)
     }
 
+
+    function initRects() {
+      let left = 50
+      let width = 1000
+      let height = 500
+
+      for (let i = 0; i < 40; i++) {
+        let top = rects[i - 1] ? rects[i - 1].bottom + PAGE_MARGIN_BOTTOM : 0
+        rects.push(new RenderRect(left, top, width, height))
+      }
+
+    }
 
 
     function mousedown(e) {
@@ -296,20 +312,28 @@
 
     function updateScrollBarSize() {
       let curContentRect = contentRect.matrixTransform(contentMatrix)
-      let verticalHeight = viewBoxRect.height * verticalScrollRect.height / curContentRect.height
-      verticalScrollThumb.style.height = `${verticalHeight}px`
-      let horizontalWidth = viewBoxRect.width * horizontalScrollRect.width / curContentRect.width
-      horizontalScrollThumb.style.width = `${horizontalWidth}px`
+      verticalThumbHeight = viewBoxRect.height * verticalScrollRect.height / curContentRect.height
+      verticalThumbHeight = Math.max(verticalThumbHeight, ScrollThumbMinSize)
+      verticalScrollThumb.style.height = `${verticalThumbHeight}px`
+
+      verticalContentRatio = (verticalScrollRect.height - verticalThumbHeight) / (curContentRect.height - viewBoxRect.height)
+
+
+      horizontalThumbWidth = viewBoxRect.width * horizontalScrollRect.width / curContentRect.width
+      horizontalThumbWidth = Math.max(horizontalThumbWidth, ScrollThumbMinSize)
+      horizontalScrollThumb.style.width = `${horizontalThumbWidth}px`
+
+      horizontalComtentRatio = (horizontalScrollRect.width - horizontalThumbWidth) / (curContentRect.width - viewBoxRect.width)
     }
 
 
     function transformScrollBar() {
       //滚动条变换矩阵
-      let translateY = (contentMatrix.f / contentMatrix.d) * verticalScrollRect.height / contentRect.height
+      let translateY = contentMatrix.f * verticalContentRatio
       let verticalScrollMatrix = new DOMMatrix().translateSelf(0, -translateY)
       verticalScrollThumb.style.transform = verticalScrollMatrix.toString()
 
-      let translateX = (contentMatrix.e / contentMatrix.a) * horizontalScrollRect.width / contentRect.width
+      let translateX = contentMatrix.e * horizontalComtentRatio
       let horizontalScrollMatrix = new DOMMatrix().translateSelf(-translateX, 0)
       horizontalScrollThumb.style.transform = horizontalScrollMatrix.toString()
     }
@@ -326,8 +350,7 @@
         return
       }
       let deltaY = verticalScrollPoint.y - e.pageY
-      let translateY = deltaY * contentRect.height / verticalScrollRect.height
-
+      let translateY = deltaY / verticalContentRatio / contentMatrix.d
       let translate = translateBoundCheck(0, translateY)
       let matrix = contentMatrix.translate(0, translate.y)
       renderFrame(matrix)
@@ -346,7 +369,7 @@
         return
       }
       let deltaX = horizontalScrollPoint.x - e.pageX
-      let translateX = deltaX * contentRect.width / horizontalScrollRect.width
+      let translateX = deltaX / horizontalComtentRatio / contentMatrix.a
 
       let translate = translateBoundCheck(translateX, 0)
       let matrix = contentMatrix.translate(translate.x, 0)
@@ -418,7 +441,12 @@
           ctx.fill()
         }
 
-        // ctx.resetTransform()
+        ctx.save()
+        ctx.strokeStyle = 'black'
+        ctx.font = "50px serif";
+        ctx.fillText(renderRect.index, 50, 50)
+        ctx.restore()
+
         ctx.restore()
       })
       console.log(output)
