@@ -132,7 +132,8 @@
     }
   </script>
   <script>
-    const PAGE_MARGIN_BOTTOM = 10
+    const PAGE_MARGIN_BOTTOM = 30
+    const SCROLL_THUMB_MIN_SIZE = 30
     let scale = 1
 
     let rects = []
@@ -155,6 +156,11 @@
     let horizontalScroll
     let verticalScrollThumb
     let horizontalScrollThumb
+    let verticalThumbHeight
+    let horizontalThumbWidth
+
+    let verticalContentRatio
+    let horizontalComtentRatio
 
     let isVerticalScroll
     let verticalScrollPoint
@@ -200,7 +206,8 @@
 
     function initContent() {
       // loadPDF('./public/word.pdf').then(() => {
-      loadPDF('./public/mkl-2020-developer-reference-c-0.pdf').then(() => {
+      loadPDF('./public/book.pdf').then(() => {
+        // loadPDF('./public/mkl-2020-developer-reference-c-0.pdf').then(() => {
         // loadPDF('./public/test.pdf').then(() => {
         //初始化内容信息
         let contentRectHeight = rects[rects.length - 1].bottom
@@ -277,8 +284,7 @@
       let translateX = p1.x - p2.x
       let translateY = p1.y - p2.y
 
-      let translate = translateBoundCheck(translateX, translateY)
-      let matrix = contentMatrix.translate(translate.x, translate.y)
+      let matrix = contentMatrix.translate(translateX, translateY)
       renderFrame(matrix)
       mouseStratPoint = new DOMPoint(e.pageX, e.pageY)
 
@@ -323,8 +329,7 @@
       let matrix = contentMatrix.scale(scale)
       let deltaX = (transformMatrix.e - matrix.e) / transformMatrix.a
       let deltaY = (transformMatrix.f - matrix.f) / transformMatrix.d
-      let translate = translateBoundCheck(deltaX, deltaY, matrix)
-      matrix.translateSelf(translate.x, translate.y)
+      matrix.translateSelf(deltaX, deltaY)
 
       renderFrame(matrix, point)
       updateScrollBarSize()
@@ -336,8 +341,7 @@
     function scrollHorizontalContent(e) {
       let translateX = -e.deltaY / contentMatrix.a
 
-      let translate = translateBoundCheck(translateX, 0)
-      let matrix = contentMatrix.translate(translate.x, translate.y)
+      let matrix = contentMatrix.translate(translateX, 0)
       renderFrame(matrix)
 
       transformScrollBar()
@@ -346,8 +350,7 @@
     function scrollVerticalContent(e) {
       let translateY = -e.deltaY / contentMatrix.a
 
-      let translate = translateBoundCheck(0, translateY)
-      let matrix = contentMatrix.translate(translate.x, translate.y)
+      let matrix = contentMatrix.translate(0, translateY)
       renderFrame(matrix)
 
       transformScrollBar()
@@ -356,20 +359,28 @@
 
     function updateScrollBarSize() {
       let curContentRect = contentRect.matrixTransform(contentMatrix)
-      let verticalHeight = viewBoxRect.height * verticalScrollRect.height / curContentRect.height
-      verticalScrollThumb.style.height = `${verticalHeight}px`
-      let horizontalWidth = viewBoxRect.width * horizontalScrollRect.width / curContentRect.width
-      horizontalScrollThumb.style.width = `${horizontalWidth}px`
+      verticalThumbHeight = viewBoxRect.height * verticalScrollRect.height / curContentRect.height
+      verticalThumbHeight = Math.max(verticalThumbHeight, SCROLL_THUMB_MIN_SIZE)
+      verticalScrollThumb.style.height = `${verticalThumbHeight}px`
+
+      verticalContentRatio = (verticalScrollRect.height - verticalThumbHeight) / (curContentRect.height - viewBoxRect.height)
+
+
+      horizontalThumbWidth = viewBoxRect.width * horizontalScrollRect.width / curContentRect.width
+      horizontalThumbWidth = Math.max(horizontalThumbWidth, SCROLL_THUMB_MIN_SIZE)
+      horizontalScrollThumb.style.width = `${horizontalThumbWidth}px`
+
+      horizontalComtentRatio = (horizontalScrollRect.width - horizontalThumbWidth) / (curContentRect.width - viewBoxRect.width)
     }
 
 
     function transformScrollBar() {
       //滚动条变换矩阵
-      let translateY = (contentMatrix.f / contentMatrix.d) * verticalScrollRect.height / contentRect.height
+      let translateY = contentMatrix.f * verticalContentRatio
       let verticalScrollMatrix = new DOMMatrix().translateSelf(0, -translateY)
       verticalScrollThumb.style.transform = verticalScrollMatrix.toString()
 
-      let translateX = (contentMatrix.e / contentMatrix.a) * horizontalScrollRect.width / contentRect.width
+      let translateX = contentMatrix.e * horizontalComtentRatio
       let horizontalScrollMatrix = new DOMMatrix().translateSelf(-translateX, 0)
       horizontalScrollThumb.style.transform = horizontalScrollMatrix.toString()
     }
@@ -386,10 +397,9 @@
         return
       }
       let deltaY = verticalScrollPoint.y - e.pageY
-      let translateY = deltaY * contentRect.height / verticalScrollRect.height
+      let translateY = deltaY / verticalContentRatio / contentMatrix.d
 
-      let translate = translateBoundCheck(0, translateY)
-      let matrix = contentMatrix.translate(0, translate.y)
+      let matrix = contentMatrix.translate(0, translateY)
       renderFrame(matrix)
 
       verticalScrollPoint = { x: e.pageX, y: e.pageY }
@@ -406,10 +416,9 @@
         return
       }
       let deltaX = horizontalScrollPoint.x - e.pageX
-      let translateX = deltaX * contentRect.width / horizontalScrollRect.width
+      let translateX = deltaX / horizontalComtentRatio / contentMatrix.a
 
-      let translate = translateBoundCheck(translateX, 0)
-      let matrix = contentMatrix.translate(translate.x, 0)
+      let matrix = contentMatrix.translate(translateX, 0)
       renderFrame(matrix)
 
       horizontalScrollPoint = { x: e.pageX, y: e.pageY }
@@ -417,71 +426,35 @@
     }
 
 
-    /** 
-     *  检查matrix矩阵下需要可进行位移边界
-     **/
-    function translateBoundCheck(x, y, matrix = contentMatrix) {
-      let curContentRect = contentRect.matrixTransform(matrix)
-      if (x < 0 && curContentRect.right > viewBoxRect.right) {
-        //向左变换
-        let bound = viewBoxRect.right - curContentRect.right
-        x = Math.max(x, bound)
-      } else if (x > 0 && curContentRect.left < 0) {
-        x = Math.min(x, - curContentRect.left)
+    function matrixBoundCheck(matrix) {
+      let preContentRect = contentRect.matrixTransform(matrix)
+      if (preContentRect.width <= viewBoxRect.width) {
+        //矩阵变换后比视口小则设置居中显示
+        let centerLeft = (viewBoxRect.width - preContentRect.width) / 2
+        matrix.e = centerLeft
       } else {
-        x = 0
+        //设置挪动边界值
+        let minX = (viewBoxRect.width - preContentRect.width)
+        matrix.e = Math.max(matrix.e, minX)
+        matrix.e = Math.min(matrix.e, 0)
       }
 
-      if (y < 0 && curContentRect.bottom > viewBoxRect.bottom) {
-        let bound = viewBoxRect.bottom - curContentRect.bottom
-        y = Math.max(y, bound)
-      } else if (y > 0 && curContentRect.top < 0) {
-        y = Math.min(y, - curContentRect.top)
-      } else {
-        y = 0
+      if (viewBoxRect.height < preContentRect.height) {
+        let minY = (viewBoxRect.height - preContentRect.height)
+        matrix.f = Math.max(matrix.f, minY)
+        matrix.f = Math.min(matrix.f, 0)
       }
-
-      return { x, y }
     }
 
 
     function renderFrame(matrix, point) {
+      matrixBoundCheck(matrix)
+
       let rects = getRenderRects(matrix, point)
       contentMatrix = matrix
 
       let frameTask = new FrameTask(DOMMatrix.fromMatrix(matrix), rects)
       render(frameTask)
-    }
-
-
-
-    function render1(frameTask) {
-      ctx.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
-      let output = []
-      frameTask.renderRects.forEach(renderRect => {
-        ctx.save()
-        ctx.beginPath()
-        let type = renderRect.index % 3
-        ctx.lineWidth = type == 0 ? 10 : type == 1 ? 20 : 30
-        ctx.fillStyle = type == 0 ? 'red' : type == 1 ? 'blue' : 'green'
-        ctx.strokeStyle = type == 0 ? 'red' : type == 1 ? 'blue' : 'green'
-
-        let renderRectMatrix = DOMMatrix.fromMatrix(frameTask.matrix)
-        let transformMaxtrx = renderRectMatrix.translateSelf(renderRect.left, renderRect.top)
-
-        output.push({ index: renderRect.index, matrix: transformMaxtrx })
-        ctx.transform(transformMaxtrx.a, transformMaxtrx.b, transformMaxtrx.c, transformMaxtrx.d, transformMaxtrx.e, transformMaxtrx.f)
-        ctx.rect(0, 0, renderRect.width, renderRect.height)
-        if (type == 0) {
-          ctx.stroke()
-        } else {
-          ctx.fill()
-        }
-
-        // ctx.resetTransform()
-        ctx.restore()
-      })
-      console.log(output)
     }
 
 
@@ -500,14 +473,42 @@
       }
     }
 
-
     async function renderPDFFrame(frameTask) {
+      offscreenCtx.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
+      let output = []
+      frameTask.renderRects.forEach(renderRect => {
+        offscreenCtx.save()
+        offscreenCtx.beginPath()
+        let type = renderRect.index % 3
+        offscreenCtx.lineWidth = type == 0 ? 10 : type == 1 ? 20 : 30
+        offscreenCtx.fillStyle = type == 0 ? 'red' : type == 1 ? 'blue' : 'green'
+        offscreenCtx.strokeStyle = type == 0 ? 'red' : type == 1 ? 'blue' : 'green'
+
+        let renderRectMatrix = DOMMatrix.fromMatrix(frameTask.matrix)
+        let transformMaxtrx = renderRectMatrix.translateSelf(renderRect.left, renderRect.top)
+
+        output.push({ index: renderRect.index, matrix: transformMaxtrx })
+        offscreenCtx.transform(transformMaxtrx.a, transformMaxtrx.b, transformMaxtrx.c, transformMaxtrx.d, transformMaxtrx.e, transformMaxtrx.f)
+        offscreenCtx.rect(0, 0, renderRect.width, renderRect.height)
+        if (type == 0) {
+          offscreenCtx.stroke()
+        } else {
+          offscreenCtx.fill()
+        }
+        offscreenCtx.restore()
+      })
+      offscreenRenderToFrame()
+      console.log(output)
+    }
+
+
+    async function renderPDFFrame1(frameTask) {
       offscreenCtx.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
       for (let i = 0; i < frameTask.renderRects.length; i++) {
         let renderRect = frameTask.renderRects[i]
         await renderPDFPage(frameTask.matrix, renderRect)
       }
-      offscreenRender()
+      offscreenRenderToFrame()
     }
 
     async function renderPDFPage(matrix, renderRect) {
@@ -577,8 +578,12 @@
           }
           //在两页中间
           if (point.y > rect.bottom && point.y < renderRects[i + 1]?.top) {
-            containsRests.push(rect)
-            containsRests.push(rects[i + 1])
+            if (checkIntersect(rect, viewBoxRect)) {
+              containsRests.push(rect)
+            }
+            if (checkIntersect(renderRects[i + 1], viewBoxRect)) {
+              containsRests.push(renderRects[i + 1])
+            }
           }
         }
 
@@ -663,7 +668,7 @@
       return true
     }
 
-    function offscreenRender() {
+    function offscreenRenderToFrame() {
       let bitmap = offscreenCanvas.transferToImageBitmap();
       ctx.transferFromImageBitmap(bitmap);
     }
