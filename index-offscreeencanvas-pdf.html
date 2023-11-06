@@ -63,7 +63,7 @@
       margin: 0 4px;
     }
   </style>
-  <script src="./lib/pdf.js"></script>
+  <script src="./lib//build/pdf.js"></script>
   <script>
     class RenderRect {
       leftTopPoint
@@ -473,7 +473,7 @@
       }
     }
 
-    async function renderPDFFrame(frameTask) {
+    async function renderPDFFrame1(frameTask) {
       offscreenCtx.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
       let output = []
       frameTask.renderRects.forEach(renderRect => {
@@ -502,7 +502,7 @@
     }
 
 
-    async function renderPDFFrame1(frameTask) {
+    async function renderPDFFrame(frameTask) {
       offscreenCtx.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
       for (let i = 0; i < frameTask.renderRects.length; i++) {
         let renderRect = frameTask.renderRects[i]
@@ -515,18 +515,18 @@
       offscreenCtx.save()
       let pageINdex = renderRect.index + 1
       let pdfPageProxy = await pdfDocumentProxy.getPage(pageINdex)
-      let viewport = pdfPageProxy.getViewport({ scale })
+      let viewport = pdfPageProxy.getViewport({ scale: scale * matrix.a })
       let transform = matrix.translate(renderRect.left, renderRect.top)
-
 
       let renderContext = {
         viewport,
         canvasContext: offscreenCtx,
-        transform: [transform.a, transform.b, transform.c, transform.d, transform.e, transform.f],
+        transform: [1, transform.b, transform.c, 1, transform.e, transform.f],
         background: 'rgba(0, 0, 0, 0)'
       }
       let renderTask = pdfPageProxy.render(renderContext)
       await renderTask.promise
+      pdfPageProxy.cleanup()
       offscreenCtx.restore()
     }
 
