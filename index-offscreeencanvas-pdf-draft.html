@@ -143,8 +143,12 @@
     let viewBoxRect
     let contentRect
     let ctx
-    let offscreenCtx
-    let offscreenCanvas
+    let offscreenCacheCanvas
+    let offscreenDraftCanvas
+    let offscreenCacheBitmap
+    let offscreenDraftBitmap
+
+    let renderBitmapInfo
 
     let verticalScrollMatrix = new DOMMatrix()
     let horizontalScrollMatrix = new DOMMatrix()
@@ -174,8 +178,10 @@
     let pdfDocumentProxy
 
 
-    let isRenderingFrame = false
-    let renderingframeTask
+    let isRenderingCacheFrame = false
+    let isRenderingDraftFrame = false
+    let renderingCacheframeTask
+    let renderingDraftframeTask
 
     onload = () => {
       initViewbox()
@@ -199,9 +205,9 @@
       canvas.width = width
       canvas.height = height
       viewBoxRect = new RenderRect(0, 0, width, height)
-      ctx = canvas.getContext('bitmaprenderer')
-      offscreenCanvas = new OffscreenCanvas(wrapper.clientWidth, wrapper.clientHeight)
-      offscreenCtx = offscreenCanvas.getContext('2d')
+      ctx = canvas.getContext('2d')
+      offscreenCacheCanvas = new OffscreenCanvas(wrapper.clientWidth, wrapper.clientHeight)
+      offscreenDraftCanvas = new OffscreenCanvas(wrapper.clientWidth, wrapper.clientHeight)
     }
 
     function initContent() {
@@ -262,6 +268,7 @@
 
         contentRectWidth = Math.max(contentRectWidth, Math.abs(left) + width)
         let rect = new RenderRect(left, top, width, height)
+        rect.index = i
         rects[i] = rect
       }
 
@@ -454,65 +461,96 @@
       contentMatrix = matrix
 
       let frameTask = new FrameTask(DOMMatrix.fromMatrix(matrix), rects)
-      render(frameTask)
+      triggerDraftFrameRender(frameTask)
+
+      triggerCacheFrameRender()
     }
 
 
-    async function render(frameTask) {
-      if (isRenderingFrame) {
-        renderingframeTask = frameTask
+    async function triggerDraftFrameRender(frameTask) {
+      if (isRenderingDraftFrame) {
+        renderingDraftframeTask = frameTask
         return
       }
-      isRenderingFrame = true
+      isRenderingDraftFrame = true
 
-      await renderPDFFrame(frameTask)
-      isRenderingFrame = false
-      if (renderingframeTask) {
-        render(renderingframeTask)
-        renderingframeTask = null
+      await renderDraftFrame(frameTask)
+      isRenderingDraftFrame = false
+      if (renderingDraftframeTask) {
+        triggerDraftFrameRender(renderingDraftframeTask)
+        renderingDraftframeTask = null
       }
     }
 
-    async function renderPDFFrame1(frameTask) {
-      offscreenCtx.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
-      let output = []
-      frameTask.renderRects.forEach(renderRect => {
-        offscreenCtx.save()
-        offscreenCtx.beginPath()
-        let type = renderRect.index % 3
-        offscreenCtx.lineWidth = type == 0 ? 10 : type == 1 ? 20 : 30
-        offscreenCtx.fillStyle = type == 0 ? 'red' : type == 1 ? 'blue' : 'green'
-        offscreenCtx.strokeStyle = type == 0 ? 'red' : type == 1 ? 'blue' : 'green'
+    async function triggerCacheFrameRender() {
+      if (isRenderingCacheFrame) {
+        renderingCacheframeTask = frameTask
+        return
+      }
+      isRenderingCacheFrame = true
 
-        let renderRectMatrix = DOMMatrix.fromMatrix(frameTask.matrix)
-        let transformMaxtrx = renderRectMatrix.translateSelf(renderRect.left, renderRect.top)
-
-        output.push({ index: renderRect.index, matrix: transformMaxtrx })
-        offscreenCtx.transform(transformMaxtrx.a, transformMaxtrx.b, transformMaxtrx.c, transformMaxtrx.d, transformMaxtrx.e, transformMaxtrx.f)
-        offscreenCtx.rect(0, 0, renderRect.width, renderRect.height)
-        if (type == 0) {
-          offscreenCtx.stroke()
-        } else {
-          offscreenCtx.fill()
-        }
-        offscreenCtx.restore()
-      })
-      offscreenRenderToFrame()
-      console.log(output)
+      await renderCacheFrame()
+      isRenderingCacheFrame = false
+      if (renderingCacheframeTask) {
+        triggerCacheFrameRender(renderingCacheframeTask)
+        renderingCacheframeTask = null
+      }
     }
 
 
-    async function renderPDFFrame(frameTask) {
-      offscreenCtx.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
+
+    //向视口渲染
+    function renderCacheFrame(bitmapInfo = renderBitmapInfo) {
+      console.log(renderBitmapInfo)
+      if (!bitmapInfo) {
+        return
+      }
+
+      let inverse = bitmapInfo.matrix.inverse()
+      let matrix = contentMatrix.multiply(inverse)
+
+      console.log(matrix.f)
+      ctx.clearRect(0, 0, viewBoxRect.width, viewBoxRect.height)
+      ctx.save()
+      ctx.setTransform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f)
+      ctx.drawImage(bitmapInfo.bitmap, 0, 0, viewBoxRect.width, viewBoxRect.height)
+      ctx.resetTransform()
+      ctx.restore()
+    }
+
+
+
+    //草稿帧，pdf实际渲染
+    async function renderDraftFrame(frameTask) {
+      let context = offscreenDraftCanvas.getContext('2d')
+      context.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
+
+      //部分渲染
       for (let i = 0; i < frameTask.renderRects.length; i++) {
         let renderRect = frameTask.renderRects[i]
-        await renderPDFPage(frameTask.matrix, renderRect)
+        let matrix = DOMMatrix.fromMatrix(frameTask.matrix)
+        await renderPDFPage(context, matrix, renderRect)
       }
-      offscreenRenderToFrame()
+
+      let swap = offscreenCacheCanvas
+      offscreenCacheCanvas = offscreenDraftCanvas
+      offscreenDraftCanvas = swap
+
+      let oldBitmap = offscreenCacheBitmap
+      offscreenCacheBitmap = offscreenCacheCanvas.transferToImageBitmap();
+      if (oldBitmap) {
+        oldBitmap.close()
+      }
+
+      renderBitmapInfo = {
+        matrix: DOMMatrix.fromMatrix(frameTask.matrix),
+        bitmap: offscreenCacheBitmap
+      }
+      triggerCacheFrameRender(renderBitmapInfo)
     }
 
-    async function renderPDFPage(matrix, renderRect) {
-      offscreenCtx.save()
+    async function renderPDFPage(context, matrix, renderRect) {
+      context.save()
       let pageINdex = renderRect.index + 1
       let pdfPageProxy = await pdfDocumentProxy.getPage(pageINdex)
       let viewport = pdfPageProxy.getViewport({ scale: scale * matrix.a })
@@ -520,14 +558,21 @@
 
       let renderContext = {
         viewport,
-        canvasContext: offscreenCtx,
+        canvasContext: context,
         transform: [1, transform.b, transform.c, 1, transform.e, transform.f],
         background: 'rgba(0, 0, 0, 0)'
       }
       let renderTask = pdfPageProxy.render(renderContext)
       await renderTask.promise
       // pdfPageProxy.cleanup()
-      offscreenCtx.restore()
+      context.restore()
+    }
+
+    async function renderRectPage(context, matrix, renderRect) {
+      context.save()
+      context.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f)
+      context.fillRect(renderRect.left, renderRect.top, renderRect.width, renderRect.height)
+      context.restore()
     }
 
 
@@ -556,7 +601,6 @@
             }
             continue
           }
-          rect.index = i
           matchRects.push(rect)
           isFound = true
         }
@@ -587,8 +631,6 @@
           }
         }
 
-        console.log('当前', containsRests)
-
         matchRects.push(...containsRests)
         //向上寻找
         for (let i = containsRests[0].index - 1; i >= 0; i--) {
@@ -597,7 +639,6 @@
           if (!isIntersect) {
             break
           }
-          rect.index = i
           matchRects.unshift(rect)
         }
 
@@ -608,7 +649,6 @@
           if (!isIntersect) {
             break
           }
-          rect.index = i
           matchRects.push(rect)
         }
 
@@ -628,7 +668,6 @@
               }
               continue
             }
-            rect.index = i
             matchRects.push(rect)
             isFound = true
           }
@@ -645,7 +684,6 @@
               }
               continue
             }
-            rect.index = i
             matchRects.unshift(rect)
             isFound = true
           }
@@ -666,11 +704,6 @@
         return false
       }
       return true
-    }
-
-    function offscreenRenderToFrame() {
-      let bitmap = offscreenCanvas.transferToImageBitmap();
-      ctx.transferFromImageBitmap(bitmap);
     }
   </script>
 

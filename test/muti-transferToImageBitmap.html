@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+  <style>
+    html,
+    body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    #wrapper {
+      height: 100%;
+      width: 100%;
+      box-sizing: border-box;
+      display: flex;
+    }
+
+    #content {
+      width: 100%;
+      height: 1600px;
+      border: 10px solid rosybrown;
+      box-sizing: border-box;
+      transform-origin: 0 0;
+    }
+
+    #canvas-one {
+      border-right: 1px solid salmon;
+    }
+  </style>
+  <script>
+
+    // 一个OffscreenCanvas调用transferToImageBitmap()方法获得到ImageBitmap之后OffscreenCanvas内容将会被清空
+    //此时再次调用OffscreenCanvas的transferToImageBitmap()获得到的ImageBitmap为空白
+    //一个ImageBitmap被transferFromImageBitmap使用后，将会被关闭，所以只能被使用一次
+
+    onload = () => {
+      let wrapper = document.getElementById('wrapper')
+      let canvasOne = document.getElementById('canvas-one')
+      let canvasTwo = document.getElementById('canvas-two')
+      let width = wrapper.clientWidth / 2
+      canvasOne.style.width = `${width}px`
+      canvasOne.style.height = `${wrapper.clientHeight}px`
+      canvasOne.width = width
+      canvasOne.height = wrapper.clientHeight
+
+      canvasTwo.style.width = `${width}px`
+      canvasTwo.style.height = `${width}px`
+      canvasTwo.width = wrapper.clientWidth
+      canvasTwo.height = wrapper.clientHeight
+
+
+      var offscreen = new OffscreenCanvas(256, 256);
+      // var gl = offscreen.getContext("webgl");
+      var gl = offscreen.getContext("2d");
+      gl.fillRect(20, 20, 20, 20)
+
+
+      var bitmapOne = offscreen.transferToImageBitmap();
+      var bitmapTwo = offscreen.transferToImageBitmap();
+
+
+      let contextOne = canvasOne.getContext("bitmaprenderer");
+      let contextTwo = canvasTwo.getContext("bitmaprenderer");
+
+      contextOne.transferFromImageBitmap(bitmapOne)
+      contextTwo.transferFromImageBitmap(bitmapOne)
+
+
+    }
+  </script>
+
+</head>
+
+<body>
+  <div id="wrapper">
+    <canvas id="canvas-one"></canvas>
+    <canvas id="canvas-two"></canvas>
+  </div>
+</body>
+
+</html>

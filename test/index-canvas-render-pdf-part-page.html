@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+  <script src="../lib/build/pdf.js"></script>
+  <style>
+    html,
+    body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    #wrapper {
+      height: 100%;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    #content {
+      width: 100%;
+      height: 1600px;
+      border: 10px solid rosybrown;
+      box-sizing: border-box;
+      transform-origin: 0 0;
+    }
+  </style>
+  <script>
+    let ctx
+    let pdfDoc
+    let scale = 1
+    let transform = [1, 0, 0, 1, -200, 810]
+    // let transform = [1, 0, 0, 1, 0, 0]
+
+    onload = () => {
+      let wrapper = document.getElementById('wrapper')
+      let canvas = document.getElementById('canvas')
+      canvas.style.width = `${wrapper.clientWidth}px`
+      canvas.style.height = `${wrapper.clientHeight}px`
+      canvas.width = wrapper.clientWidth
+      canvas.height = wrapper.clientHeight
+      ctx = canvas.getContext('2d')
+      renderPage('../public/test.pdf')
+    }
+
+    async function renderPage(url) {
+      pdfjsLib.GlobalWorkerOptions.workerMaxCacheSize = 1
+      pdfDoc = await pdfjsLib.getDocument(url).promise
+      let numPages = pdfDoc.numPages
+      let startTime
+
+      await defauleRender(3)
+      canvas.width = canvas.width
+      startTime = Date.now()
+      await defauleRender(3)
+      let defaultTime = Date.now() - startTime
+
+      canvas.width = canvas.width
+      startTime = Date.now()
+      await transformRender(3)
+      let ctxTime = Date.now() - startTime
+
+
+      canvas.width = canvas.width
+      startTime = Date.now()
+      await pdfTransformRender(3)
+      let pdfjsTime = Date.now() - startTime
+
+
+      console.log({ defaultTime, ctxTime, pdfjsTime })
+    }
+
+
+    async function defauleRender(index = 2) {
+      ctx.save()
+      let pdfPageProxy = await pdfDoc.getPage(index)
+      let viewport = pdfPageProxy.getViewport({ scale })
+      let renderContext = {
+        viewport: viewport,
+        canvasContext: ctx
+      }
+      await renderTest(pdfPageProxy, renderContext)
+      ctx.restore()
+    }
+
+
+    async function transformRender(index = 2) {
+      //ctx  transform
+      ctx.save()
+      let pdfPageProxy = await pdfDoc.getPage(index)
+      let viewport = pdfPageProxy.getViewport({ scale })
+      ctx.transform(transform[0], transform[1], transform[2], transform[3], transform[4], transform[5])
+      let renderContext = {
+        viewport: viewport,
+        canvasContext: ctx
+      }
+      await renderTest(pdfPageProxy, renderContext)
+      ctx.restore()
+    }
+
+    async function pdfTransformRender(index = 2) {
+      //pdfjs transform
+      ctx.save()
+      let pdfPageProxy = await pdfDoc.getPage(index)
+      let viewport = pdfPageProxy.getViewport({ scale })
+      let renderContext = {
+        viewport: viewport,
+        canvasContext: ctx,
+        transform,
+      }
+      await renderTest(pdfPageProxy, renderContext)
+      ctx.restore()
+
+    }
+
+    async function renderTest(pdfPageProxy, renderContext) {
+      for (let i = 0; i < 1; i++) {
+        await pdfPageProxy.render(renderContext).promise
+        pdfPageProxy.cleanup()
+      }
+    }
+
+  </script>
+
+</head>
+
+<body>
+  <div id="wrapper">
+    <canvas id="canvas" />
+  </div>
+</body>
+
+</html>
