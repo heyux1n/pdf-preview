@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+  <script src="../lib/pdf.js"></script>
+  <style>
+    html,
+    body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    #wrapper {
+      height: 100%;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    #content {
+      width: 100%;
+      height: 1600px;
+      border: 10px solid rosybrown;
+      box-sizing: border-box;
+      transform-origin: 0 0;
+    }
+  </style>
+  <script>
+    let ctx
+    let pdfPageProxy
+    let scale = 1
+
+    onload = () => {
+      let wrapper = document.getElementById('wrapper')
+      let canvas = document.getElementById('canvas')
+      canvas.style.width = `${wrapper.clientWidth}px`
+      canvas.style.height = `${wrapper.clientHeight}px`
+      canvas.width = wrapper.clientWidth
+      canvas.height = wrapper.clientHeight
+      ctx = canvas.getContext('2d')
+      renderPage('../public/test.pdf')
+    }
+
+    async function renderPage(url) {
+      let pdfDoc = await pdfjsLib.getDocument(url).promise
+      let numPages = pdfDoc.numPages
+      pdfPageProxy = await pdfDoc.getPage(4)
+
+
+      //clip transform
+      let transform = [1, 0, 0, 1, 600, 720]
+      startTime = Date.now()
+
+      ctx.save()
+      let clipPath = new Path2D()
+      clipPath.rect(0, 0, canvas.width, canvas.height)
+      let transformClipPath = new Path2D()
+      transformClipPath.addPath(clipPath, new DOMMatrix(transform))
+      ctx.clip(transformClipPath, 'nonzero')
+      await renderPDF()
+      ctx.restore()
+
+      await renderPDF()
+      await renderPDF()
+      await renderPDF()
+      await renderPDF()
+      await renderPDF()
+      await renderPDF()
+
+      let clipTime = Date.now() - startTime
+
+
+      console.log({ clipTime })
+    }
+
+
+    async function renderPDF() {
+      ctx.save()
+      let viewport = pdfPageProxy.getViewport({ scale })
+      let renderContext = {
+        viewport: viewport,
+        canvasContext: ctx,
+        background: 'rgba(0, 0, 0, 0)'
+      }
+      await pdfPageProxy.render(renderContext).promise
+      ctx.restore()
+    }
+
+  </script>
+
+</head>
+
+<body>
+  <div id="wrapper">
+    <canvas id="canvas" />
+  </div>
+</body>
+
+</html>

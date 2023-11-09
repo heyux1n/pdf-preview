@@ -539,10 +539,8 @@
     //草稿帧，pdf实际渲染
     async function renderDraftFrame(frameTask) {
       let context = offscreenDraftCanvas.getContext('2d')
+      context.save()
       context.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
-      // console.log("视口", frameTask.renderRects.map(rect => rect.index))
-      console.log("视口", frameTask.renderRects)
-
 
       //过滤需要渲染的部分
       if (renderBitmapInfo && renderBitmapInfo.matrix.a == frameTask.matrix.a) {
@@ -558,11 +556,17 @@
 
         //获取差集矩形
         let diffRects = getRectDifference()
-        console.log(diffRects)
+
+        //创建clip区域
+        let clipPath = new Path2D()
+        diffRects.forEach(rect => clipPath.rect(rect.left, rect.top, rect.width, rect.height))
+        context.clip(clipPath, 'nonzero')
+
+        let inverseMatrix = contentMatrix.inverse()
         //需要重新渲染的页面是不在交集内的矩形
         frameTask.renderRects = frameTask.renderRects.filter(rect => {
           for (let i = 0; i < diffRects.length; i++) {
-            let diffRect = diffRects[i];
+            let diffRect = diffRects[i].matrixTransform(inverseMatrix);
             if (checkIntersect(diffRect, rect)) {
               return true
             }
@@ -572,11 +576,13 @@
       }
 
       console.log(frameTask.renderRects.map(rect => rect.index))
+      //创建pdf可渲染区域
       for (let i = 0; i < frameTask.renderRects.length; i++) {
         let renderRect = frameTask.renderRects[i]
         let matrix = DOMMatrix.fromMatrix(frameTask.matrix)
         await renderPDFPage(context, matrix, renderRect)
       }
+      context.restore()
 
 
       let swap = offscreenCacheCanvas
@@ -666,11 +672,6 @@
     }
 
     function getRectDifference() {
-      let inverseMatrix = contentMatrix.inverse()
-      let preInverse = renderBitmapInfo.matrix.inverse()
-
-      let preViewBoxRect = viewBoxRect.matrixTransform(renderBitmapInfo.matrix)
-
       let offsetX = contentMatrix.e - renderBitmapInfo.matrix.e
       let offsetY = contentMatrix.f - renderBitmapInfo.matrix.f
       let diffRects = []
@@ -696,9 +697,6 @@
         ox = -offsetX
         recty.left = recty.right - ox
       }
-
-      rectx = rectx.matrixTransform(inverseMatrix)
-      recty = recty.matrixTransform(inverseMatrix)
       return [
         rectx, recty
       ]
