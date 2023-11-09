@@ -100,6 +100,22 @@
         return this.rightBottomPoint.y - this.leftTopPoint.y
       }
 
+      set bottom(bottom) {
+        this.rightBottomPoint.y = bottom
+      }
+
+      set top(top) {
+        this.leftTopPoint.y = top
+      }
+
+      set left(left) {
+        this.leftTopPoint.x = left
+      }
+
+      set right(right) {
+        this.rightBottomPoint.x = right
+      }
+
 
       matrixTransform(matrix) {
         let leftTopPoint = this.leftTopPoint.matrixTransform(matrix)
@@ -146,7 +162,6 @@
     let offscreenCacheCanvas
     let offscreenDraftCanvas
     let offscreenCacheBitmap
-    let offscreenDraftBitmap
 
     let renderBitmapInfo
 
@@ -180,8 +195,10 @@
 
     let isRenderingCacheFrame = false
     let isRenderingDraftFrame = false
-    let renderingCacheframeTask
     let renderingDraftframeTask
+
+    let renderingCacheBitmap
+
 
     onload = () => {
       initViewbox()
@@ -456,13 +473,16 @@
 
     function renderFrame(matrix, point) {
       matrixBoundCheck(matrix)
+      if (renderBitmapInfo?.bitmap && !isMatrixModified(contentMatrix, matrix)) {
+        return
+      }
 
       let rects = getRenderRects(matrix, point)
-      contentMatrix = matrix
 
       let frameTask = new FrameTask(DOMMatrix.fromMatrix(matrix), rects)
-      triggerDraftFrameRender(frameTask)
+      contentMatrix = matrix
 
+      triggerDraftFrameRender(frameTask)
       triggerCacheFrameRender()
     }
 
@@ -482,18 +502,18 @@
       }
     }
 
-    async function triggerCacheFrameRender() {
+    async function triggerCacheFrameRender(renderBitmapInfo) {
       if (isRenderingCacheFrame) {
-        renderingCacheframeTask = frameTask
+        renderingCacheBitmap = renderBitmapInfo
         return
       }
       isRenderingCacheFrame = true
 
       await renderCacheFrame()
       isRenderingCacheFrame = false
-      if (renderingCacheframeTask) {
-        triggerCacheFrameRender(renderingCacheframeTask)
-        renderingCacheframeTask = null
+      if (renderingCacheBitmap) {
+        triggerCacheFrameRender(renderingCacheBitmap)
+        renderingCacheBitmap = null
       }
     }
 
@@ -501,20 +521,16 @@
 
     //向视口渲染
     function renderCacheFrame(bitmapInfo = renderBitmapInfo) {
-      console.log(renderBitmapInfo)
       if (!bitmapInfo) {
         return
       }
 
       let inverse = bitmapInfo.matrix.inverse()
       let matrix = contentMatrix.multiply(inverse)
-
-      console.log(matrix.f)
       ctx.clearRect(0, 0, viewBoxRect.width, viewBoxRect.height)
       ctx.save()
       ctx.setTransform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f)
       ctx.drawImage(bitmapInfo.bitmap, 0, 0, viewBoxRect.width, viewBoxRect.height)
-      ctx.resetTransform()
       ctx.restore()
     }
 
@@ -524,13 +540,44 @@
     async function renderDraftFrame(frameTask) {
       let context = offscreenDraftCanvas.getContext('2d')
       context.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
+      // console.log("视口", frameTask.renderRects.map(rect => rect.index))
+      console.log("视口", frameTask.renderRects)
 
-      //部分渲染
+
+      //过滤需要渲染的部分
+      if (renderBitmapInfo && renderBitmapInfo.matrix.a == frameTask.matrix.a) {
+        //绘制上一帧像素
+        if (renderBitmapInfo?.bitmap) {
+          let inverse = renderBitmapInfo.matrix.inverse()
+          let matrix = frameTask.matrix.multiply(inverse)
+          context.save()
+          context.setTransform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f)
+          context.drawImage(renderBitmapInfo.bitmap, 0, 0, viewBoxRect.width, viewBoxRect.height)
+          context.restore()
+        }
+
+        //获取差集矩形
+        let diffRects = getRectDifference()
+        console.log(diffRects)
+        //需要重新渲染的页面是不在交集内的矩形
+        frameTask.renderRects = frameTask.renderRects.filter(rect => {
+          for (let i = 0; i < diffRects.length; i++) {
+            let diffRect = diffRects[i];
+            if (checkIntersect(diffRect, rect)) {
+              return true
+            }
+          }
+          return false
+        })
+      }
+
+      console.log(frameTask.renderRects.map(rect => rect.index))
       for (let i = 0; i < frameTask.renderRects.length; i++) {
         let renderRect = frameTask.renderRects[i]
         let matrix = DOMMatrix.fromMatrix(frameTask.matrix)
         await renderPDFPage(context, matrix, renderRect)
       }
+
 
       let swap = offscreenCacheCanvas
       offscreenCacheCanvas = offscreenDraftCanvas
@@ -556,6 +603,7 @@
       let viewport = pdfPageProxy.getViewport({ scale: scale * matrix.a })
       let transform = matrix.translate(renderRect.left, renderRect.top)
 
+      // context.transform(1, transform.b, transform.c, 1, transform.e, transform.f)
       let renderContext = {
         viewport,
         canvasContext: context,
@@ -578,10 +626,148 @@
 
     function getRenderRects(matrix, point) {
       let inverseMatrix = matrix.inverse()
-      let transformViewBoxRect = viewBoxRect.matrixTransform(inverseMatrix)
-      //基于matrix计算需要进行渲染的页面进行渲染
+      let postViewBoxRect = viewBoxRect.matrixTransform(inverseMatrix)
+      return matchRenderRects(matrix, postViewBoxRect, point)
 
-      return matchRenderRects(matrix, transformViewBoxRect, point)
+    }
+
+
+    function getRectDifference0() {
+      let inverseMatrix = contentMatrix.inverse()
+
+      let offsetX = contentMatrix.e - renderBitmapInfo.matrix.e
+      let offsetY = contentMatrix.f - renderBitmapInfo.matrix.f
+      let diffRects = []
+
+      let rectx
+      let recty
+      //
+      if (offsetY > 0) {
+        rectx = new RenderRect(viewBoxRect.left + offsetX, viewBoxRect.bottom, viewBoxRect.width, offsetY)
+      } else if (offsetY < 0) {
+        rectx = new RenderRect(viewBoxRect.left + offsetX, viewBoxRect.top + offsetY, viewBoxRect.width, -offsetY)
+      }
+
+      if (offsetX > 0) {
+        recty = new RenderRect(viewBoxRect.right, viewBoxRect.top + offsetY, offsetX, viewBoxRect.height)
+      } else if (offsetX < 0) {
+        recty = new RenderRect(viewBoxRect.left + offsetX, viewBoxRect.top + offsetY, offsetX, viewBoxRect.height)
+      }
+      if (rectx) {
+        rectx = rectx.matrixTransform(inverseMatrix)
+        diffRects.push(rectx)
+      }
+      if (recty) {
+        recty = recty.matrixTransform(inverseMatrix)
+        diffRects.push(recty)
+      }
+      return diffRects
+
+    }
+
+    function getRectDifference() {
+      let inverseMatrix = contentMatrix.inverse()
+      let preInverse = renderBitmapInfo.matrix.inverse()
+
+      let preViewBoxRect = viewBoxRect.matrixTransform(renderBitmapInfo.matrix)
+
+      let offsetX = contentMatrix.e - renderBitmapInfo.matrix.e
+      let offsetY = contentMatrix.f - renderBitmapInfo.matrix.f
+      let diffRects = []
+
+      let rectx = new RenderRect(0, 0, viewBoxRect.width, viewBoxRect.height)
+      let recty = new RenderRect(0, 0, viewBoxRect.width, viewBoxRect.height)
+
+
+      let ox = 0, oy = 0, nx = 0, ny = 0
+      if (offsetY > 0) {
+        ny = offsetY
+        rectx.bottom = ny
+        recty.top = rectx.bottom
+      } else {
+        oy = -offsetY
+        rectx.top = rectx.bottom - oy
+        recty.bottom = rectx.top
+      }
+      if (offsetX > 0) {
+        nx = offsetX
+        recty.right = nx
+      } else {
+        ox = -offsetX
+        recty.left = recty.right - ox
+      }
+
+      rectx = rectx.matrixTransform(inverseMatrix)
+      recty = recty.matrixTransform(inverseMatrix)
+      return [
+        rectx, recty
+      ]
+    }
+
+    /**
+     * rect1是新矩形
+     **/
+    function getRectDifference2(rect1, rect2) {
+      //content坐标系下，之前的视口矩形
+      let preInverseMatrix = renderBitmapInfo.matrix.inverse()
+      let preViewBoxRect = viewBoxRect.matrixTransform(preInverseMatrix)
+      //content坐标系下，最新的视口矩形
+      let inverseMatrix = contentMatrix.inverse()
+      let postViewBoxRect = viewBoxRect.matrixTransform(inverseMatrix)
+      //交集区域
+      let left = Math.max(rect1.left, rect2.left);
+      let top = Math.max(rect1.top, rect2.top);
+      let right = Math.min(rect1.right, rect2.right);
+      let bottom = Math.min(rect1.bottom, rect2.bottom);
+      // console.log({ left, top, right, bottom, })
+      // console.log({ l1: rect1.left, l2: rect2.left, t1: rect1.top, t2: rect2.top })
+      if (left < right && top < bottom) {
+        let diffRects = []
+        if (rect1.left > rect2.left) {
+          diffRects.push(new RenderRect(rect2.right, rect1.top, rect1.right - rect2.right, rect1.height))
+        } else if (rect1.left < rect2.left) {
+          diffRects.push(new RenderRect(rect1.left, rect1.top, rect2.left - rect1.left, rect1.height))
+        }
+
+        if (rect1.top > rect2.top) {
+          diffRects.push(new RenderRect(rect1.left, rect1.bottom, rect1.width, rect1.bottom - rect2.bottom))
+        } else if (rect1.top < rect2.top) {
+          diffRects.push(new RenderRect(rect1.left, rect2.top, rect1.width, rect2.top - rect1.top))
+        }
+        return diffRects
+      }
+      //无相交
+      return [rect];
+    }
+
+
+    function getRectDifference1(rect1, rect2) {
+      //content坐标系下，之前的视口矩形
+      let preInverseMatrix = renderBitmapInfo.matrix.inverse()
+      let preViewBoxRect = viewBoxRect.matrixTransform(preInverseMatrix)
+      //content坐标系下，最新的视口矩形
+      let inverseMatrix = contentMatrix.inverse()
+      let postViewBoxRect = viewBoxRect.matrixTransform(inverseMatrix)
+      // 计算交集
+      let left = Math.max(rect1.left, rect2.left);
+      let top = Math.max(rect1.top, rect2.top);
+      let right = Math.min(rect1.right, rect2.right);
+      let bottom = Math.min(rect1.bottom, rect2.bottom);
+
+      if (left < right && top < bottom) {
+        // 有交集，计算差集
+        let diffRects = [
+          new RenderRect(rect1.left, rect1.top, rect1.right - rect1.left, top - rect1.top),
+          new RenderRect(rect1.left, top, left - rect1.left, bottom - top),
+          new RenderRect(rect1.left, bottom, rect1.right - rect1.left, rect1.bottom - bottom),
+          new RenderRect(right, top, rect1.right - right, bottom - top),
+        ];
+
+        // 过滤掉无效的矩形（没有面积的矩形）
+        return diffRects.filter(rect => (rect.left < rect.right && rect.top < rect.bottom));
+      } else {
+        return [rect1];
+      }
     }
 
 
@@ -695,15 +881,22 @@
       return matchRects
     }
 
-
     function checkIntersect(rect1, rect2) {
-      if (rect1.right < rect2.left ||
+      return !(rect1.right < rect2.left ||
         rect1.bottom < rect2.top ||
         rect1.left > rect2.right ||
-        rect1.top > rect2.bottom) {
-        return false
-      }
-      return true
+        rect1.top > rect2.bottom)
+    }
+
+    function isMatrixModified(matrix1, matrix2) {
+      return (
+        matrix1.a !== matrix2.a ||
+        matrix1.b !== matrix2.b ||
+        matrix1.c !== matrix2.c ||
+        matrix1.d !== matrix2.d ||
+        matrix1.e !== matrix2.e ||
+        matrix1.f !== matrix2.f
+      );
     }
   </script>
 

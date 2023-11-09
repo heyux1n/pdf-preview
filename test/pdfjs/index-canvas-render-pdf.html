@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+  <script src="../../lib/pdf.js"></script>
+  <style>
+    html,
+    body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    #wrapper {
+      height: 100%;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    #content {
+      width: 100%;
+      height: 1600px;
+      border: 10px solid rosybrown;
+      box-sizing: border-box;
+      transform-origin: 0 0;
+    }
+  </style>
+  <script>
+    let ctx
+    let pdfDoc
+    let scale = 1
+    let transform = [1, 0, 0, 1, -200, -200]
+
+    onload = () => {
+      let wrapper = document.getElementById('wrapper')
+      let canvas = document.getElementById('canvas')
+      canvas.style.width = `${wrapper.clientWidth}px`
+      canvas.style.height = `${wrapper.clientHeight}px`
+      canvas.width = wrapper.clientWidth
+      canvas.height = wrapper.clientHeight
+      ctx = canvas.getContext('2d')
+      renderPage('../../public/test.pdf')
+    }
+
+    async function renderPage(url) {
+      pdfDoc = await pdfjsLib.getDocument(url).promise
+      let numPages = pdfDoc.numPages
+      let renderContext
+      let startTime
+
+      startTime = Date.now()
+      await defauleRender()
+      let defaultTime = Date.now() - startTime
+
+      console.log({ defaultTime })
+    }
+
+
+    async function defauleRender() {
+      ctx.save()
+      let pdfPageProxy = await pdfDoc.getPage(2)
+
+      let offsetTransfrom = {
+        scale, offsetX: 700,
+        offsetY: 800
+      }
+      // let viewport = pdfPageProxy.getViewport({
+      //   scale
+      // })
+
+      let viewport = pdfPageProxy.getViewport({
+        scale,
+        dontFlip: false,
+        offsetX: -100,
+        offsetY: -100,
+        viewBox: [-100, -100, 500, 500]
+      });
+      viewport.viewBox = [10, 10, 100, 100]
+
+      // viewport.width = 100
+      // viewport.height = 100
+      // viewport.transform = [1, 0, 0, -1, 282, 1261]
+
+      // viewport.viewBox = [-182.387238, -219.042999, 500, 600]
+
+
+      renderContext = {
+        viewport: viewport,
+        canvasContext: ctx,
+      }
+      console.log(renderContext)
+      await pdfPageProxy.render(renderContext).promise
+      ctx.restore()
+    }
+  </script>
+
+</head>
+
+<body>
+  <div id="wrapper">
+    <canvas id="canvas" />
+  </div>
+</body>
+
+</html>
