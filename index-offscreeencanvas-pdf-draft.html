@@ -126,13 +126,10 @@
 
 
       contains(point) {
-        if (this.right < point.x ||
+        return !(this.right < point.x ||
           this.bottom < point.y ||
           this.left > point.x ||
-          this.top > point.y) {
-          return false
-        }
-        return true
+          this.top > point.y)
       }
 
     }
@@ -159,7 +156,6 @@
     let viewBoxRect
     let contentRect
     let ctx
-    let offscreenCacheCanvas
     let offscreenDraftCanvas
     let offscreenCacheBitmap
 
@@ -223,15 +219,14 @@
       canvas.height = height
       viewBoxRect = new RenderRect(0, 0, width, height)
       ctx = canvas.getContext('2d')
-      offscreenCacheCanvas = new OffscreenCanvas(wrapper.clientWidth, wrapper.clientHeight)
       offscreenDraftCanvas = new OffscreenCanvas(wrapper.clientWidth, wrapper.clientHeight)
     }
 
     function initContent() {
       // loadPDF('./public/word.pdf').then(() => {
-      loadPDF('./public/book.pdf').then(() => {
-        // loadPDF('./public/mkl-2020-developer-reference-c-0.pdf').then(() => {
-        // loadPDF('./public/test.pdf').then(() => {
+      // loadPDF('./public/book.pdf').then(() => {
+      // loadPDF('./public/mkl-2020-developer-reference-c-0.pdf').then(() => {
+      loadPDF('./public/test.pdf').then(() => {
         //初始化内容信息
         let contentRectHeight = rects[rects.length - 1].bottom
         contentRect = new RenderRect(0, 0, contentRectWidth, contentRectHeight)
@@ -307,12 +302,12 @@
       let p2 = mouseStratPoint.matrixTransform(inverseMatrix)
       let translateX = p1.x - p2.x
       let translateY = p1.y - p2.y
-
       let matrix = contentMatrix.translate(translateX, translateY)
-      renderFrame(matrix)
-      mouseStratPoint = new DOMPoint(e.pageX, e.pageY)
 
+      renderFrame(matrix)
       transformScrollBar()
+
+      mouseStratPoint = new DOMPoint(e.pageX, e.pageY)
     }
 
 
@@ -422,12 +417,12 @@
       }
       let deltaY = verticalScrollPoint.y - e.pageY
       let translateY = deltaY / verticalContentRatio / contentMatrix.d
-
       let matrix = contentMatrix.translate(0, translateY)
-      renderFrame(matrix)
 
-      verticalScrollPoint = { x: e.pageX, y: e.pageY }
+
+      renderFrame(matrix)
       transformScrollBar()
+      verticalScrollPoint = { x: e.pageX, y: e.pageY }
     }
 
     function horizontalmousedown(e) {
@@ -550,6 +545,8 @@
           let matrix = frameTask.matrix.multiply(inverse)
           context.save()
           context.setTransform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f)
+          //禁用抗锯齿，当偏移矩阵为浮点，抗锯齿会出现内容模糊的情况
+          context.imageSmoothingEnabled = false;
           context.drawImage(renderBitmapInfo.bitmap, 0, 0, viewBoxRect.width, viewBoxRect.height)
           context.restore()
         }
@@ -560,7 +557,7 @@
         //创建clip区域
         let clipPath = new Path2D()
         diffRects.forEach(rect => clipPath.rect(rect.left, rect.top, rect.width, rect.height))
-        context.clip(clipPath, 'nonzero')
+        context.clip(clipPath)
 
         let inverseMatrix = contentMatrix.inverse()
         //需要重新渲染的页面是不在交集内的矩形
@@ -583,24 +580,24 @@
         await renderPDFPage(context, matrix, renderRect)
       }
       context.restore()
+      swapDraftToCacheBitmap(offscreenDraftCanvas, frameTask.matrix)
+    }
 
 
-      let swap = offscreenCacheCanvas
-      offscreenCacheCanvas = offscreenDraftCanvas
-      offscreenDraftCanvas = swap
 
+    function swapDraftToCacheBitmap(offscreenCanvas, matrix) {
       let oldBitmap = offscreenCacheBitmap
-      offscreenCacheBitmap = offscreenCacheCanvas.transferToImageBitmap();
+      offscreenCacheBitmap = offscreenDraftCanvas.transferToImageBitmap();
       if (oldBitmap) {
         oldBitmap.close()
       }
-
       renderBitmapInfo = {
-        matrix: DOMMatrix.fromMatrix(frameTask.matrix),
+        matrix: DOMMatrix.fromMatrix(matrix),
         bitmap: offscreenCacheBitmap
       }
       triggerCacheFrameRender(renderBitmapInfo)
     }
+
 
     async function renderPDFPage(context, matrix, renderRect) {
       context.save()
@@ -620,6 +617,35 @@
       await renderTask.promise
       // pdfPageProxy.cleanup()
       context.restore()
+    }
+
+
+    //保存上一帧图片
+    function saveBitmapToImage(matrix, bitmap, name) {
+      let canvas = document.createElement("canvas");
+      canvas.width = bitmap.width; // 设置Canvas的宽度为位图的宽度
+      canvas.height = bitmap.height; // 设置Canvas的高度为位图的高度
+
+      let ctx = canvas.getContext("2d");
+      // 获取Canvas的2D上下文
+      ctx.save()
+      ctx.setTransform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f)
+      // 将位图绘制到Canvas上
+      ctx.drawImage(bitmap, 0, 0);
+      ctx.restore()
+
+
+      // 将Canvas内容保存为图像文件
+      canvas.toBlob(function (blob) {
+        let a = document.createElement("a");
+        document.body.appendChild(a);
+        a.style = "display: none";
+        let url = window.URL.createObjectURL(blob);
+        a.href = url;
+        a.download = `${name}.png`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+      }, "image/png"); // 指定保存的图像格式，如PNG
     }
 
     async function renderRectPage(context, matrix, renderRect) {
@@ -717,8 +743,6 @@
       let top = Math.max(rect1.top, rect2.top);
       let right = Math.min(rect1.right, rect2.right);
       let bottom = Math.min(rect1.bottom, rect2.bottom);
-      // console.log({ left, top, right, bottom, })
-      // console.log({ l1: rect1.left, l2: rect2.left, t1: rect1.top, t2: rect2.top })
       if (left < right && top < bottom) {
         let diffRects = []
         if (rect1.left > rect2.left) {
