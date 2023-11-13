@@ -63,7 +63,7 @@
       margin: 0 4px;
     }
   </style>
-  <script src="./lib//build/pdf.js"></script>
+  <script src="./lib/pdf.js"></script>
   <script>
     class RenderRect {
       leftTopPoint
@@ -156,10 +156,12 @@
     let viewBoxRect
     let contentRect
     let ctx
+    let offscreenCacheCanvas
     let offscreenDraftCanvas
-    let offscreenCacheBitmap
+    let offscreenDraftContext
+    let offscreenCacheContext
 
-    let renderBitmapInfo
+    let renderImageInfo
 
     let verticalScrollMatrix = new DOMMatrix()
     let horizontalScrollMatrix = new DOMMatrix()
@@ -220,6 +222,10 @@
       viewBoxRect = new RenderRect(0, 0, width, height)
       ctx = canvas.getContext('2d')
       offscreenDraftCanvas = new OffscreenCanvas(wrapper.clientWidth, wrapper.clientHeight)
+      offscreenCacheCanvas = new OffscreenCanvas(wrapper.clientWidth, wrapper.clientHeight)
+
+      offscreenDraftContext = offscreenDraftCanvas.getContext('2d')
+      offscreenCacheContext = offscreenCacheCanvas.getContext('2d')
     }
 
     function initContent() {
@@ -468,7 +474,7 @@
 
     function renderFrame(matrix, point) {
       matrixBoundCheck(matrix)
-      if (renderBitmapInfo?.bitmap && !isMatrixModified(contentMatrix, matrix)) {
+      if (renderImageInfo && !isMatrixModified(contentMatrix, matrix)) {
         return
       }
 
@@ -497,9 +503,9 @@
       }
     }
 
-    async function triggerCacheFrameRender(renderBitmapInfo) {
+    async function triggerCacheFrameRender(renderImageInfo) {
       if (isRenderingCacheFrame) {
-        renderingCacheBitmap = renderBitmapInfo
+        renderingCacheBitmap = renderImageInfo
         return
       }
       isRenderingCacheFrame = true
@@ -515,17 +521,18 @@
 
 
     //向视口渲染
-    function renderCacheFrame(bitmapInfo = renderBitmapInfo) {
+    async function renderCacheFrame(bitmapInfo = renderImageInfo) {
       if (!bitmapInfo) {
         return
       }
 
       let inverse = bitmapInfo.matrix.inverse()
       let matrix = contentMatrix.multiply(inverse)
+
       ctx.clearRect(0, 0, viewBoxRect.width, viewBoxRect.height)
       ctx.save()
       ctx.setTransform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f)
-      ctx.drawImage(bitmapInfo.bitmap, 0, 0, viewBoxRect.width, viewBoxRect.height)
+      ctx.drawImage(offscreenCacheCanvas, 0, 0, viewBoxRect.width, viewBoxRect.height)
       ctx.restore()
     }
 
@@ -533,23 +540,20 @@
 
     //草稿帧，pdf实际渲染
     async function renderDraftFrame(frameTask) {
-      let context = offscreenDraftCanvas.getContext('2d')
-      context.save()
-      context.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
+      offscreenDraftContext.save()
+      offscreenDraftContext.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
 
       //过滤需要渲染的部分
-      if (renderBitmapInfo && renderBitmapInfo.matrix.a == frameTask.matrix.a) {
+      if (renderImageInfo && renderImageInfo.matrix.a == frameTask.matrix.a) {
         //绘制上一帧像素
-        if (renderBitmapInfo?.bitmap) {
-          let inverse = renderBitmapInfo.matrix.inverse()
-          let matrix = frameTask.matrix.multiply(inverse)
-          context.save()
-          context.setTransform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f)
-          //禁用抗锯齿，当偏移矩阵为浮点，抗锯齿会出现内容模糊的情况
-          context.imageSmoothingEnabled = false;
-          context.drawImage(renderBitmapInfo.bitmap, 0, 0, viewBoxRect.width, viewBoxRect.height)
-          context.restore()
-        }
+
+        let inverse = renderImageInfo.matrix.inverse()
+        let matrix = frameTask.matrix.multiply(inverse)
+        offscreenDraftContext.save()
+        //获取缓存帧中
+        let cacheImageData = offscreenCacheContext.getImageData(0, 0, viewBoxRect.width, viewBoxRect.height)
+        offscreenDraftContext.putImageData(cacheImageData, matrix.e, matrix.f)
+        offscreenDraftContext.restore()
 
         //获取差集矩形
         let diffRects = getRectDifference()
@@ -557,7 +561,7 @@
         //创建clip区域
         let clipPath = new Path2D()
         diffRects.forEach(rect => clipPath.rect(rect.left, rect.top, rect.width, rect.height))
-        context.clip(clipPath)
+        offscreenDraftContext.clip(clipPath)
 
         let inverseMatrix = contentMatrix.inverse()
         //需要重新渲染的页面是不在交集内的矩形
@@ -577,25 +581,27 @@
       for (let i = 0; i < frameTask.renderRects.length; i++) {
         let renderRect = frameTask.renderRects[i]
         let matrix = DOMMatrix.fromMatrix(frameTask.matrix)
-        await renderPDFPage(context, matrix, renderRect)
+        await renderPDFPage(offscreenDraftContext, matrix, renderRect)
       }
-      context.restore()
-      swapDraftToCacheBitmap(offscreenDraftCanvas, frameTask.matrix)
+      offscreenDraftContext.restore()
+      swapDraftToCacheBitmap(frameTask.matrix)
     }
 
 
 
-    function swapDraftToCacheBitmap(offscreenCanvas, matrix) {
-      let oldBitmap = offscreenCacheBitmap
-      offscreenCacheBitmap = offscreenDraftCanvas.transferToImageBitmap();
-      if (oldBitmap) {
-        oldBitmap.close()
+    function swapDraftToCacheBitmap(matrix) {
+      let swap = offscreenCacheCanvas
+      offscreenCacheCanvas = offscreenDraftCanvas
+      offscreenDraftCanvas = swap
+
+      let swapContext = offscreenCacheContext
+      offscreenCacheContext = offscreenDraftContext
+      offscreenDraftContext = swapContext
+
+      renderImageInfo = {
+        matrix: DOMMatrix.fromMatrix(matrix)
       }
-      renderBitmapInfo = {
-        matrix: DOMMatrix.fromMatrix(matrix),
-        bitmap: offscreenCacheBitmap
-      }
-      triggerCacheFrameRender(renderBitmapInfo)
+      triggerCacheFrameRender(renderImageInfo)
     }
 
 
@@ -615,7 +621,7 @@
       }
       let renderTask = pdfPageProxy.render(renderContext)
       await renderTask.promise
-      // pdfPageProxy.cleanup()
+      pdfPageProxy.cleanup()
       context.restore()
     }
 
@@ -663,43 +669,9 @@
 
     }
 
-
-    function getRectDifference0() {
-      let inverseMatrix = contentMatrix.inverse()
-
-      let offsetX = contentMatrix.e - renderBitmapInfo.matrix.e
-      let offsetY = contentMatrix.f - renderBitmapInfo.matrix.f
-      let diffRects = []
-
-      let rectx
-      let recty
-      //
-      if (offsetY > 0) {
-        rectx = new RenderRect(viewBoxRect.left + offsetX, viewBoxRect.bottom, viewBoxRect.width, offsetY)
-      } else if (offsetY < 0) {
-        rectx = new RenderRect(viewBoxRect.left + offsetX, viewBoxRect.top + offsetY, viewBoxRect.width, -offsetY)
-      }
-
-      if (offsetX > 0) {
-        recty = new RenderRect(viewBoxRect.right, viewBoxRect.top + offsetY, offsetX, viewBoxRect.height)
-      } else if (offsetX < 0) {
-        recty = new RenderRect(viewBoxRect.left + offsetX, viewBoxRect.top + offsetY, offsetX, viewBoxRect.height)
-      }
-      if (rectx) {
-        rectx = rectx.matrixTransform(inverseMatrix)
-        diffRects.push(rectx)
-      }
-      if (recty) {
-        recty = recty.matrixTransform(inverseMatrix)
-        diffRects.push(recty)
-      }
-      return diffRects
-
-    }
-
     function getRectDifference() {
-      let offsetX = contentMatrix.e - renderBitmapInfo.matrix.e
-      let offsetY = contentMatrix.f - renderBitmapInfo.matrix.f
+      let offsetX = contentMatrix.e - renderImageInfo.matrix.e
+      let offsetY = contentMatrix.f - renderImageInfo.matrix.f
       let diffRects = []
 
       let rectx = new RenderRect(0, 0, viewBoxRect.width, viewBoxRect.height)
@@ -726,70 +698,6 @@
       return [
         rectx, recty
       ]
-    }
-
-    /**
-     * rect1是新矩形
-     **/
-    function getRectDifference2(rect1, rect2) {
-      //content坐标系下，之前的视口矩形
-      let preInverseMatrix = renderBitmapInfo.matrix.inverse()
-      let preViewBoxRect = viewBoxRect.matrixTransform(preInverseMatrix)
-      //content坐标系下，最新的视口矩形
-      let inverseMatrix = contentMatrix.inverse()
-      let postViewBoxRect = viewBoxRect.matrixTransform(inverseMatrix)
-      //交集区域
-      let left = Math.max(rect1.left, rect2.left);
-      let top = Math.max(rect1.top, rect2.top);
-      let right = Math.min(rect1.right, rect2.right);
-      let bottom = Math.min(rect1.bottom, rect2.bottom);
-      if (left < right && top < bottom) {
-        let diffRects = []
-        if (rect1.left > rect2.left) {
-          diffRects.push(new RenderRect(rect2.right, rect1.top, rect1.right - rect2.right, rect1.height))
-        } else if (rect1.left < rect2.left) {
-          diffRects.push(new RenderRect(rect1.left, rect1.top, rect2.left - rect1.left, rect1.height))
-        }
-
-        if (rect1.top > rect2.top) {
-          diffRects.push(new RenderRect(rect1.left, rect1.bottom, rect1.width, rect1.bottom - rect2.bottom))
-        } else if (rect1.top < rect2.top) {
-          diffRects.push(new RenderRect(rect1.left, rect2.top, rect1.width, rect2.top - rect1.top))
-        }
-        return diffRects
-      }
-      //无相交
-      return [rect];
-    }
-
-
-    function getRectDifference1(rect1, rect2) {
-      //content坐标系下，之前的视口矩形
-      let preInverseMatrix = renderBitmapInfo.matrix.inverse()
-      let preViewBoxRect = viewBoxRect.matrixTransform(preInverseMatrix)
-      //content坐标系下，最新的视口矩形
-      let inverseMatrix = contentMatrix.inverse()
-      let postViewBoxRect = viewBoxRect.matrixTransform(inverseMatrix)
-      // 计算交集
-      let left = Math.max(rect1.left, rect2.left);
-      let top = Math.max(rect1.top, rect2.top);
-      let right = Math.min(rect1.right, rect2.right);
-      let bottom = Math.min(rect1.bottom, rect2.bottom);
-
-      if (left < right && top < bottom) {
-        // 有交集，计算差集
-        let diffRects = [
-          new RenderRect(rect1.left, rect1.top, rect1.right - rect1.left, top - rect1.top),
-          new RenderRect(rect1.left, top, left - rect1.left, bottom - top),
-          new RenderRect(rect1.left, bottom, rect1.right - rect1.left, rect1.bottom - bottom),
-          new RenderRect(right, top, rect1.right - right, bottom - top),
-        ];
-
-        // 过滤掉无效的矩形（没有面积的矩形）
-        return diffRects.filter(rect => (rect.left < rect.right && rect.top < rect.bottom));
-      } else {
-        return [rect1];
-      }
     }
 
 

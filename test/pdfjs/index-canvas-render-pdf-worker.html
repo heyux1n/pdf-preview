@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+  <script src="../../lib/build/pdf.js"></script>
+  <style>
+    html,
+    body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    #wrapper {
+      height: 100%;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    #content {
+      width: 100%;
+      height: 1600px;
+      border: 10px solid rosybrown;
+      box-sizing: border-box;
+      transform-origin: 0 0;
+    }
+  </style>
+  <script>
+    let ctx
+    let pdfDoc
+    let scale = 1
+    let transform = [1, 0, 0, 1, -200, -200]
+
+    onload = () => {
+      let wrapper = document.getElementById('wrapper')
+      let canvas = document.getElementById('canvas')
+      canvas.style.width = `${wrapper.clientWidth}px`
+      canvas.style.height = `${wrapper.clientHeight}px`
+      canvas.width = wrapper.clientWidth
+      canvas.height = wrapper.clientHeight
+      ctx = canvas.getContext('2d')
+
+      let worker = new Worker('./worker/renderpdf.js')
+      console.log('xxx')
+      worker.onmessage = event => {
+        console.log('---')
+        console.log(event)
+      }
+
+      worker.onerror = event => {
+        console.log("===", event)
+      }
+
+      // worker.postMessage({ url: "http://localhost:3000/public/test.pdf" })
+      worker.postMessage({ url: "../../../public/test.pdf" })
+    }
+
+  </script>
+
+</head>
+
+<body>
+  <div id="wrapper">
+    <canvas id="canvas" />
+  </div>
+</body>
+
+</html>

@@ -140,20 +140,14 @@
 
     async function renderCacheFrame(matrix) {
       ctx.clearRect(0, 0, canvas.width, canvas.height)
-
       ctx.save()
-      console.log(matrix)
-      console.log(cacheImageData)
-
-      // offscreenCtx.save()
-      // offscreenCtx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f)
-      // offscreenCtx.fillRect(10, 10, 20, 20)
-      // cacheImageData = offscreenCtx.getImageData(0, 0, canvas.width, canvas.height);
-      // offscreenCtx.restore()
 
 
-      ctx.putImageData(cacheImageData, matrix.e, matrix.f)
-      console.log(cacheImageData)
+      console.log('缩放')
+      offscreenCtx.transform(2, 0, 0, 2, 100, 100)
+      let imageData = offscreenCtx.getImageData(0, 0, canvas.width, canvas.height);
+      // ctx.transform(2, 0, 0, 2, 100, 100)
+      ctx.putImageData(imageData, matrix.e, matrix.f)
       ctx.restore()
     }
 
