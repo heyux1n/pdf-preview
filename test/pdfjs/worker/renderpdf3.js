@@ -1,8 +1,24 @@
-import 
+// import globalThis from '../../../lib/pdfjs-4.0.189-dist/build/pdf.mjs'
+importScripts('../../../lib/pdfjs-4.0.189-dist/build/pdf.mjs')
 
 async function renderPage(buffer) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = '../../../lib/build/pdf.worker.js'
-  let pdfDoc = await pdfjsLib.getDocument(buffer).promise
+  // const worker = new Worker('../../../lib/build/pdf.worker.js')
+  // pdfjsLib.GlobalWorkerOptions.workerSrc = worker
+
+  var { pdfjsLib } = globalThis
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '../../../lib/pdfjs-4.0.189-dist/build/pdf.worker.mjs'
+
+  const document = {
+    fonts: self.fonts,
+    createElement: name => {
+      if (name == 'canvas') {
+        return new OffscreenCanvas(1, 1)
+      }
+      return null
+    },
+  }
+
+  let pdfDoc = await pdfjsLib.getDocument({ data: buffer, ownerDocument: document }).promise
   let pdfPageProxy = await pdfDoc.getPage(2)
   let viewport = pdfPageProxy.getViewport({
     scale: 1,

@@ -5,7 +5,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Document</title>
-  <script src="../../lib/build/pdf.js"></script>
   <style>
     html,
     body {
@@ -35,7 +34,6 @@
     let scale = 1
     let transform = [1, 0, 0, 1, -200, -200]
     onload = () => {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = '../../lib/build/pdf.worker.js'
       let wrapper = document.getElementById('wrapper')
       let canvas = document.getElementById('canvas')
       canvas.style.width = `${wrapper.clientWidth}px`

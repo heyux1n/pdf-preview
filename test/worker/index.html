@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+  <style>
+    html,
+    body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    #wrapper {
+      height: 100%;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    #content {
+      width: 100%;
+      height: 1600px;
+      border: 10px solid rosybrown;
+      box-sizing: border-box;
+      transform-origin: 0 0;
+    }
+  </style>
+
+  <script>
+    onload = () => {
+      let worker = new Worker('./worker.js')
+
+      worker.onmessage = event => {
+        console.log('接收渲染结果', event.data)
+      }
+
+      worker.onerror = event => {
+        console.log('pdf-worker', event)
+      }
+
+      let info = "main-info"
+      worker.postMessage({ info })
+
+    }
+  </script>
+</head>
+
+<body>
+  <div id="wrapper">
+    <canvas id="canvas" />
+  </div>
+</body>
+
+</html>

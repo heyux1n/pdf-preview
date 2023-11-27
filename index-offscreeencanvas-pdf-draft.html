@@ -224,8 +224,8 @@
 
     function initContent() {
       // loadPDF('./public/word.pdf').then(() => {
-      loadPDF('./public/book.pdf').then(() => {
-        // loadPDF('./public/mkl-2020-developer-reference-c-0.pdf').then(() => {
+      // loadPDF('./public/book.pdf').then(() => {
+      loadPDF('./public/mkl-2020-developer-reference-c-0.pdf').then(() => {
         // loadPDF('./public/test.pdf').then(() => {
         //初始化内容信息
         let contentRectHeight = rects[rects.length - 1].bottom
@@ -615,7 +615,7 @@
       }
       let renderTask = pdfPageProxy.render(renderContext)
       await renderTask.promise
-      // pdfPageProxy.cleanup()
+      pdfPageProxy.cleanup()
       context.restore()
     }
 
