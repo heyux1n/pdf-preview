@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+  <script src="./lib/pdf.js"></script>
+  <style>
+    html,
+    body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    #wrapper {
+      height: 100%;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    #content {
+      width: 100%;
+      height: 1600px;
+      border: 10px solid rosybrown;
+      box-sizing: border-box;
+      transform-origin: 0 0;
+    }
+  </style>
+  <script>
+    let ctx
+    let pdfDoc
+    let isMouseHandle = false
+    let mousePoint = { x: 0, y: 0 }
+    let globalMatrix = new DOMMatrix()
+    let renderMatrix
+    let isRendering = false
+
+    let pageRects
+    let scale = 1
+    const PAGE_MARGIN_BOTTOM = 0
+
+    let pdfPageProxys = []
+
+    onload = () => {
+      let wrapper = document.getElementById('wrapper')
+      let canvas = document.getElementById('canvas')
+      canvas.style.width = `${wrapper.clientWidth}px`
+      canvas.style.height = `${wrapper.clientHeight}px`
+      canvas.width = wrapper.clientWidth
+      canvas.height = wrapper.clientHeight
+      ctx = canvas.getContext('2d')
+      loadPDF('public/test.pdf')
+      // loadPDF('public/1-3-4.pdf')
+
+      addGlobalListener()
+    }
+
+
+    function addGlobalListener() {
+      document.addEventListener('mousedown', e => {
+        isMouseHandle = true
+        mousePoint = { x: e.pageX, y: e.pageY }
+      })
+
+      document.addEventListener('mousemove', e => {
+        if (!isMouseHandle) {
+          return
+        }
+
+        let deltaX = e.pageX - mousePoint.x
+        let deltaY = e.pageY - mousePoint.y
+        globalMatrix.translateSelf(deltaX, deltaY)
+        mousePoint = { x: e.pageX, y: e.pageY }
+
+        renderFrame(globalMatrix)
+      })
+
+      document.addEventListener('mouseup', () => {
+        isMouseHandle = false
+      })
+    }
+
+    async function loadPDF(url) {
+      pdfDoc = await pdfjsLib.getDocument(url).promise
+      pageRects = new Array(pdfDoc.numPages)
+      for (let i = 0; i < pageRects.length; i++) {
+        let pdfPageProxy = await pdfDoc.getPage(i + 1)
+        let viewport = pdfPageProxy.getViewport({ scale })
+        let left = 50
+        let top = pageRects[i - 1] ? pageRects[i - 1].top + pageRects[i - 1].height + PAGE_MARGIN_BOTTOM : 0
+        pageRects[i] = new DOMRect(left, top, viewport.width, viewport.height)
+        pdfPageProxys.push(pdfPageProxy)
+      }
+      await renderFrame(DOMMatrix.fromMatrix(globalMatrix))
+    }
+
+    async function renderFrame(matrix) {
+      if (isRendering) {
+        renderMatrix = matrix
+        return
+      }
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      isRendering = true
+
+      for (let i = 0; i < pageRects.length; i++) {
+        let rect = pageRects[i];
+        await renderPage(matrix, i + 1, rect)
+      }
+
+      isRendering = false
+    }
+
+
+    async function renderPage(matrix, index, pageRect) {
+      let pdfPageProxy = pdfPageProxys[index - 1]
+      let viewport = pdfPageProxy.getViewport({ scale })
+
+      ctx.save()
+
+      let paegMatrix = matrix.translate(pageRect.left, pageRect.top)
+      let transform = [paegMatrix.a, paegMatrix.b, paegMatrix.c, paegMatrix.d, paegMatrix.e, paegMatrix.f]
+      ctx.transform(paegMatrix.a, paegMatrix.b, paegMatrix.c, paegMatrix.d, paegMatrix.e, paegMatrix.f)
+
+      // let clipPath = new Path2D()
+      // clipPath.rect(0, 0, pageRect.width, pageRect.height)
+      // let transformClipPath = new Path2D()
+      // transformClipPath.addPath(clipPath, paegMatrix)
+      // // ctx.clip(transformClipPath, 'nonzero')
+      // ctx.clip(transformClipPath, 'evenodd')
+
+      ctx.save()
+      ctx.fillStyle = 'cornflowerblue'
+      ctx.fillRect(pageRect.left, pageRect.top, pageRect.width, pageRect.height)
+      ctx.restore()
+
+      let renderContext = {
+        viewport: viewport,
+        canvasContext: ctx,
+        // transform,
+        // background: 'cornflowerblue'
+        // background: 'rgba(0, 0, 0, 0)'
+      }
+
+      await pdfPageProxy.render(renderContext).promise
+
+      ctx.restore()
+    }
+
+
+  </script>
+
+</head>
+
+<body>
+  <div id="wrapper">
+    <canvas id="canvas" />
+  </div>
+</body>
+
+</html>

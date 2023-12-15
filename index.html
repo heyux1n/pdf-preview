@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0, user-scalable=no">
   <title>Document</title>
   <style>
     html,
@@ -11,52 +11,827 @@
       height: 100%;
       width: 100%;
       margin: 0;
-    }
-
-    /* 滚动槽 */
-    ::-webkit-scrollbar {
-      width: 8px;
-      height: 8px;
-    }
-
-    ::-webkit-scrollbar-track {
-      border-radius: 4px;
-    }
-
-    /* 滚动条滑块 */
-    ::-webkit-scrollbar-thumb {
-      border-radius: 4px;
-      background: rgba(0, 0, 0, 0.25);
+      overflow: hidden;
     }
 
     #wrapper {
       height: 100%;
       width: 100%;
+      box-sizing: border-box;
+    }
+
+    #content {
+      width: 100%;
+      height: 1600px;
+      border: 10px solid rosybrown;
+      box-sizing: border-box;
+      transform-origin: 0 0;
+    }
+
+    .scroll-bar {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      background-color: cadetblue;
+      opacity: 0.6;
+      user-select: none;
+    }
+
+    .scrollbar-thumb {
+      background-color: aliceblue;
+      user-select: none;
+    }
+
+
+    #horizontal-scroll {
+      height: 18px;
+      left: 0;
+    }
+
+    #horizontal-scroll-thumb {
+      height: 10px;
+      margin: 4px 0;
+    }
+
+    #vertical-scroll {
+      width: 18px;
+      top: 0;
+    }
+
+    #vertical-scroll-thumb {
+      width: 10px;
+      margin: 0 4px;
     }
   </style>
   <script src="./lib/pdf.js"></script>
-  <script src="./src/PDFRender.js"></script>
   <script>
-    window.onload = () => {
-      initPdf()
+    class RenderRect {
+      leftTopPoint
+      rightBottomPoint
+
+      constructor(x, y, width, height) {
+        this.leftTopPoint = new DOMPoint(x, y)
+        this.rightBottomPoint = new DOMPoint(x + width, y + height)
+      }
+
+      get top() {
+        return this.leftTopPoint.y
+      }
+
+      get left() {
+        return this.leftTopPoint.x
+      }
+
+
+      get right() {
+        return this.rightBottomPoint.x
+      }
+
+
+      get bottom() {
+        return this.rightBottomPoint.y
+      }
+
+      get width() {
+        return this.rightBottomPoint.x - this.leftTopPoint.x
+      }
+
+      get height() {
+        return this.rightBottomPoint.y - this.leftTopPoint.y
+      }
+
+      set bottom(bottom) {
+        this.rightBottomPoint.y = bottom
+      }
+
+      set top(top) {
+        this.leftTopPoint.y = top
+      }
+
+      set left(left) {
+        this.leftTopPoint.x = left
+      }
+
+      set right(right) {
+        this.rightBottomPoint.x = right
+      }
+
+
+      matrixTransform(matrix) {
+        let leftTopPoint = this.leftTopPoint.matrixTransform(matrix)
+        let rightBottomPoint = this.rightBottomPoint.matrixTransform(matrix)
+
+        return new RenderRect(leftTopPoint.x, leftTopPoint.y, rightBottomPoint.x - leftTopPoint.x, rightBottomPoint.y - leftTopPoint.y)
+      }
+
+      checkIntersect(rect) {
+        return !(this.right < rect.left || this.bottom < rect.top || this.left > rect.right || this.top > rect.bottom)
+      }
+
+      contains(point) {
+        return !(this.right < point.x ||
+          this.bottom < point.y ||
+          this.left > point.x ||
+          this.top > point.y)
+      }
+
     }
 
-    async function initPdf() {
-      let startTime = Date.now()
-      // let pdfRender = await PDFRender.load('./public/mkl-2020-developer-reference-c-0.pdf')
-      let pdfRender = await PDFRender.load('./public/test.pdf')
-      console.log(Date.now() - startTime)
-      console.log(pdfRender)
+    class FrameTask {
+      matrix
+      renderRects
+
+      constructor(matrix, renderRects) {
+        this.matrix = matrix
+        this.renderRects = renderRects
+      }
+    }
+  </script>
+  <script>
+    const PAGE_MARGIN_BOTTOM = 30
+    const SCROLL_THUMB_MIN_SIZE = 30
+    let scale = 1
+
+    let rects = []
+    let contentMatrix = new DOMMatrix()
+    let isMouseHandle
+    let mousePoint = { x: 0, y: 0 }
+    let viewBoxRect
+    let contentRect
+    let ctx
+    let offscreenCacheCanvas
+    let offscreenDraftCanvas
+    let offscreenDraftContext
+    let offscreenCacheContext
+
+    let renderImageInfo
+
+    let verticalScrollMatrix = new DOMMatrix()
+    let horizontalScrollMatrix = new DOMMatrix()
+
+    let verticalScrollRect
+    let horizontalScrollRect
+
+    let verticalScroll
+    let horizontalScroll
+    let verticalScrollThumb
+    let horizontalScrollThumb
+    let verticalThumbHeight
+    let horizontalThumbWidth
+
+    let verticalContentRatio
+    let horizontalComtentRatio
+
+    let isVerticalScroll
+    let verticalScrollPoint
+    let isHorizontalScroll
+    let horizontalScrollPoint
+
+    let renderIndexFromTo
+
+
+    let contentRectWidth = 0
+    let pdfDocumentProxy
+
+
+    let isRenderingCacheFrame = false
+    let isRenderingDraftFrame = false
+    let renderingDraftframeTask
+
+    let renderingCacheBitmap
+
+
+    onload = () => {
+      initViewbox()
+
+      initContent()
+
+      addGlobalListener()
+      initScrollBar()
+
+    }
+
+
+    function initViewbox() {
       let wrapper = document.getElementById('wrapper')
-      let dom = pdfRender.initDom(wrapper)
-      wrapper.append(dom)
+      let width = wrapper.clientWidth
+      let height = wrapper.clientHeight
+      //初始化viewbox
+      let canvas = document.getElementById('canvas')
+      canvas.style.width = `${width}px`
+      canvas.style.height = `${height}px`
+      canvas.width = width
+      canvas.height = height
+      viewBoxRect = new RenderRect(0, 0, width, height)
+      ctx = canvas.getContext('2d')
+      offscreenDraftCanvas = new OffscreenCanvas(wrapper.clientWidth, wrapper.clientHeight)
+      offscreenCacheCanvas = new OffscreenCanvas(wrapper.clientWidth, wrapper.clientHeight)
+
+      offscreenDraftContext = offscreenDraftCanvas.getContext('2d')
+      offscreenCacheContext = offscreenCacheCanvas.getContext('2d')
+    }
+
+    function initContent() {
+      // loadPDF('./public/word.pdf').then(() => {
+      // loadPDF('./public/book.pdf').then(() => {
+      loadPDF('./public/mkl-2020-developer-reference-c-0.pdf').then(() => {
+        // loadPDF('./public/test.pdf').then(() => {
+        //初始化内容信息
+        let contentRectHeight = rects[rects.length - 1].bottom
+        contentRect = new RenderRect(0, 0, contentRectWidth, contentRectHeight)
+
+        updateScrollBarSize()
+        renderFrame(contentMatrix)
+      })
+    }
+
+
+    function addGlobalListener() {
+      document.addEventListener('mousemove', e => {
+        verticalMousemove(e)
+        horizontalMousemove(e)
+        contentMousemove(e)
+      })
+
+      document.addEventListener('mouseup', () => {
+        isMouseHandle = false
+        isVerticalScroll = false
+        isHorizontalScroll = false
+      })
+    }
+
+
+    function initScrollBar() {
+      verticalScroll = document.getElementById('vertical-scroll')
+      verticalScrollThumb = document.getElementById('vertical-scroll-thumb')
+      verticalScrollRect = new RenderRect(0, 0, verticalScroll.clientWidth, verticalScroll.clientHeight)
+
+      horizontalScroll = document.getElementById('horizontal-scroll')
+      horizontalScrollThumb = document.getElementById('horizontal-scroll-thumb')
+      horizontalScrollRect = new RenderRect(0, 0, horizontalScroll.clientWidth, horizontalScroll.clientHeight)
+    }
+
+
+    async function loadPDF(url) {
+      pdfDocumentProxy = await pdfjsLib.getDocument(url).promise
+      rects = new Array(pdfDocumentProxy.numPages)
+      let PDFWidth = 0
+      for (let i = 0; i < rects.length; i++) {
+        let pdfPageProxy = await pdfDocumentProxy.getPage(i + 1)
+        let viewport = pdfPageProxy.getViewport({ scale })
+
+        let left = 0
+        let top = rects[i - 1] ? rects[i - 1].bottom + PAGE_MARGIN_BOTTOM : 0
+        let right = viewport.width
+        let bottom = top + viewport.height
+        let width = viewport.width
+        let height = viewport.height
+
+        contentRectWidth = Math.max(contentRectWidth, Math.abs(left) + width)
+        let rect = new RenderRect(left, top, width, height)
+        rect.index = i
+        rects[i] = rect
+      }
+
+    }
+
+
+    function mousedown(e) {
+      isMouseHandle = true
+      mousePoint = new DOMPoint(e.pageX, e.pageY)
+    }
+
+    function contentMousemove(e) {
+      if (!isMouseHandle) {
+        return
+      }
+
+      let inverseMatrix = contentMatrix.inverse()
+      let p1 = new DOMPoint(e.pageX, e.pageY).matrixTransform(inverseMatrix)
+      let p2 = mousePoint.matrixTransform(inverseMatrix)
+      let translateX = p1.x - p2.x
+      let translateY = p1.y - p2.y
+      let matrix = contentMatrix.translate(translateX, translateY)
+
+      renderFrame(matrix)
+      transformScrollBar()
+
+      mousePoint = new DOMPoint(e.pageX, e.pageY)
+    }
+
+
+    function dblclick(e) {
+      let scale = 1.5
+
+      scaleContent(e.offsetX, e.offsetY, scale)
+    }
+
+
+    function mousewheel(e) {
+      event.preventDefault()
+      if (e.ctrlKey) {
+        let scale
+        if (e.deltaY > 0) {
+          scale = 0.8
+        } else {
+          scale = 1.2
+        }
+        scaleContent(e.offsetX, e.offsetY, scale)
+      } else if (e.shiftKey) {
+        scrollHorizontalContent(e)
+      } else {
+        scrollVerticalContent(e)
+      }
+    }
+
+    function scaleContent(x, y, scale) {
+      let inverseMatrix = contentMatrix.inverse()
+      //以viewBox作为坐标系计算点击点在viewBox坐标系下的坐标
+      let point = new DOMPoint(x, y).matrixTransform(inverseMatrix)
+      //将原点origin(0, 0)移动到指定点进行缩放，缩放完成后再位移到该点
+      let transformMatrix = DOMMatrix.fromMatrix(contentMatrix)
+      transformMatrix.translateSelf(point.x, point.y)
+      transformMatrix.scaleSelf(scale)
+      transformMatrix.translateSelf(-point.x, -point.y)
+
+      let matrix = contentMatrix.scale(scale)
+      let deltaX = (transformMatrix.e - matrix.e) / transformMatrix.a
+      let deltaY = (transformMatrix.f - matrix.f) / transformMatrix.d
+      matrix.translateSelf(deltaX, deltaY)
+
+      renderFrame(matrix, point)
+      updateScrollBarSize()
+      transformScrollBar()
+    }
+
+
+
+    function scrollHorizontalContent(e) {
+      let translateX = -e.deltaY / contentMatrix.a
+
+      let matrix = contentMatrix.translate(translateX, 0)
+      renderFrame(matrix)
+
+      transformScrollBar()
+    }
+
+    function scrollVerticalContent(e) {
+      let translateY = -e.deltaY / contentMatrix.a
+
+      let matrix = contentMatrix.translate(0, translateY)
+      renderFrame(matrix)
+
+      transformScrollBar()
+    }
+
+
+    function updateScrollBarSize() {
+      let curContentRect = contentRect.matrixTransform(contentMatrix)
+      verticalThumbHeight = viewBoxRect.height * verticalScrollRect.height / curContentRect.height
+      verticalThumbHeight = Math.max(verticalThumbHeight, SCROLL_THUMB_MIN_SIZE)
+      verticalScrollThumb.style.height = `${verticalThumbHeight}px`
+
+      verticalContentRatio = (verticalScrollRect.height - verticalThumbHeight) / (curContentRect.height - viewBoxRect.height)
+
+
+      horizontalThumbWidth = viewBoxRect.width * horizontalScrollRect.width / curContentRect.width
+      horizontalThumbWidth = Math.max(horizontalThumbWidth, SCROLL_THUMB_MIN_SIZE)
+      horizontalScrollThumb.style.width = `${horizontalThumbWidth}px`
+
+      horizontalComtentRatio = (horizontalScrollRect.width - horizontalThumbWidth) / (curContentRect.width - viewBoxRect.width)
+    }
+
+
+    function transformScrollBar() {
+      //滚动条变换矩阵
+      let translateY = contentMatrix.f * verticalContentRatio
+      let verticalScrollMatrix = new DOMMatrix().translateSelf(0, -translateY)
+      verticalScrollThumb.style.transform = verticalScrollMatrix.toString()
+
+      let translateX = contentMatrix.e * horizontalComtentRatio
+      let horizontalScrollMatrix = new DOMMatrix().translateSelf(-translateX, 0)
+      horizontalScrollThumb.style.transform = horizontalScrollMatrix.toString()
+    }
+
+
+
+    function verticalmousedown(e) {
+      isVerticalScroll = true
+      verticalScrollPoint = { x: e.pageX, y: e.pageY }
+    }
+
+    function verticalMousemove(e) {
+      if (!isVerticalScroll) {
+        return
+      }
+      let deltaY = verticalScrollPoint.y - e.pageY
+      let translateY = deltaY / verticalContentRatio / contentMatrix.d
+      let matrix = contentMatrix.translate(0, translateY)
+
+
+      renderFrame(matrix)
+      transformScrollBar()
+      verticalScrollPoint = { x: e.pageX, y: e.pageY }
+    }
+
+    function horizontalmousedown(e) {
+      isHorizontalScroll = true
+      horizontalScrollPoint = { x: e.pageX, y: e.pageY }
+    }
+
+    function horizontalMousemove(e) {
+      if (!isHorizontalScroll) {
+        return
+      }
+      let deltaX = horizontalScrollPoint.x - e.pageX
+      let translateX = deltaX / horizontalComtentRatio / contentMatrix.a
+
+      let matrix = contentMatrix.translate(translateX, 0)
+      renderFrame(matrix)
+
+      horizontalScrollPoint = { x: e.pageX, y: e.pageY }
+      transformScrollBar()
+    }
+
+
+    function matrixBoundCheck(matrix) {
+      let preContentRect = contentRect.matrixTransform(matrix)
+      if (preContentRect.width <= viewBoxRect.width) {
+        //矩阵变换后比视口小则设置居中显示
+        let centerLeft = (viewBoxRect.width - preContentRect.width) / 2
+        matrix.e = centerLeft
+      } else {
+        //设置挪动边界值
+        let minX = (viewBoxRect.width - preContentRect.width)
+        matrix.e = Math.max(matrix.e, minX)
+        matrix.e = Math.min(matrix.e, 0)
+      }
+
+      if (viewBoxRect.height < preContentRect.height) {
+        let minY = (viewBoxRect.height - preContentRect.height)
+        matrix.f = Math.max(matrix.f, minY)
+        matrix.f = Math.min(matrix.f, 0)
+      }
+    }
+
+
+    function renderFrame(matrix, point) {
+      matrixBoundCheck(matrix)
+      //像素是整数的，所以位移帧数才有效，需要进行取整
+      matrix.e = Math.round(matrix.e)
+      matrix.f = Math.round(matrix.f)
+      if (renderImageInfo && !isMatrixModified(contentMatrix, matrix)) {
+        return
+      }
+      renderIndexFromTo = matchRenderRects(matrix)
+      let renderRects = rects.slice(renderIndexFromTo[0], renderIndexFromTo[1] + 1)
+
+      let frameTask = new FrameTask(DOMMatrix.fromMatrix(matrix), renderRects)
+      contentMatrix = matrix
+
+      triggerDraftFrameRender(frameTask)
+      triggerCacheFrameRender()
+    }
+
+
+    async function triggerDraftFrameRender(frameTask) {
+      if (isRenderingDraftFrame) {
+        renderingDraftframeTask = frameTask
+        return
+      }
+      isRenderingDraftFrame = true
+
+      await renderDraftFrame(frameTask)
+      isRenderingDraftFrame = false
+      if (renderingDraftframeTask) {
+        triggerDraftFrameRender(renderingDraftframeTask)
+        renderingDraftframeTask = null
+      }
+    }
+
+    async function triggerCacheFrameRender(renderImageInfo) {
+      if (isRenderingCacheFrame) {
+        renderingCacheBitmap = renderImageInfo
+        return
+      }
+      isRenderingCacheFrame = true
+
+      await renderCacheFrame()
+      isRenderingCacheFrame = false
+      if (renderingCacheBitmap) {
+        triggerCacheFrameRender(renderingCacheBitmap)
+        renderingCacheBitmap = null
+      }
+    }
+
+
+
+    //向视口渲染
+    async function renderCacheFrame(bitmapInfo = renderImageInfo) {
+      if (!bitmapInfo) {
+        return
+      }
+
+      let inverse = bitmapInfo.matrix.inverse()
+      let matrix = contentMatrix.multiply(inverse)
+
+      ctx.clearRect(0, 0, viewBoxRect.width, viewBoxRect.height)
+      ctx.save()
+      ctx.setTransform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f)
+      ctx.drawImage(offscreenCacheCanvas, 0, 0, viewBoxRect.width, viewBoxRect.height)
+      ctx.restore()
+    }
+
+
+
+    //草稿帧，pdf实际渲染
+    async function renderDraftFrame(frameTask) {
+      offscreenDraftContext.save()
+      offscreenDraftContext.clearRect(viewBoxRect.left, viewBoxRect.top, viewBoxRect.width, viewBoxRect.height)
+
+      //过滤需要渲染的部分
+      if (renderImageInfo && renderImageInfo.matrix.a == frameTask.matrix.a) {
+        //计算旧一阵的相对位移
+        let deltaX = frameTask.matrix.e - renderImageInfo.matrix.e
+        let deltaY = frameTask.matrix.f - renderImageInfo.matrix.f
+        offscreenDraftContext.save()
+        //获取缓存帧中
+        offscreenDraftContext.imageSmoothingEnabled = false
+        offscreenDraftContext.translate(deltaX, deltaY)
+        offscreenDraftContext.drawImage(offscreenCacheCanvas, 0, 0, viewBoxRect.width, viewBoxRect.height)
+        offscreenDraftContext.restore()
+
+        //获取差集矩形
+        let diffRects = getRectDifference()
+
+        //创建clip区域
+        let clipPath = new Path2D()
+        diffRects.forEach(rect => clipPath.rect(rect.left, rect.top, rect.width, rect.height))
+        // offscreenDraftContext.fillStyle = 'rgba(250, 138, 163, 0.2)'
+        // offscreenDraftContext.fill(clipPath)
+        offscreenDraftContext.clip(clipPath)
+
+        let inverseMatrix = contentMatrix.inverse()
+        //需要重新渲染的页面是不在交集内的矩形
+        frameTask.renderRects = frameTask.renderRects.filter(rect => {
+          for (let i = 0; i < diffRects.length; i++) {
+            let diffRect = diffRects[i].matrixTransform(inverseMatrix);
+            if (checkIntersect(diffRect, rect)) {
+              return true
+            }
+          }
+          return false
+        })
+      }
+
+      // console.log(frameTask.renderRects.map(rect => rect.index))
+      //创建pdf可渲染区域
+      let matrix = DOMMatrix.fromMatrix(frameTask.matrix)
+      offscreenDraftContext.save()
+      for (let i = 0; i < frameTask.renderRects.length; i++) {
+        let renderRect = frameTask.renderRects[i]
+        await renderPDFPage(offscreenDraftContext, matrix, renderRect)
+      }
+      offscreenDraftContext.restore()
+      offscreenDraftContext.restore()
+      swapDraftToCacheBitmap(frameTask.matrix)
+    }
+
+
+
+    function swapDraftToCacheBitmap(matrix) {
+      let swap = offscreenCacheCanvas
+      offscreenCacheCanvas = offscreenDraftCanvas
+      offscreenDraftCanvas = swap
+
+      let swapContext = offscreenCacheContext
+      offscreenCacheContext = offscreenDraftContext
+      offscreenDraftContext = swapContext
+
+      renderImageInfo = {
+        matrix: DOMMatrix.fromMatrix(matrix)
+      }
+      triggerCacheFrameRender(renderImageInfo)
+    }
+
+
+    async function renderPDFPage(context, matrix, renderRect) {
+      context.save()
+      let pageINdex = renderRect.index + 1
+      let pdfPageProxy = await pdfDocumentProxy.getPage(pageINdex)
+      let viewport = pdfPageProxy.getViewport({ scale: scale * matrix.a })
+      let transform = matrix.translate(renderRect.left, renderRect.top)
+
+      // context.transform(1, transform.b, transform.c, 1, transform.e, transform.f)
+      let renderContext = {
+        viewport,
+        canvasContext: context,
+        transform: [1, transform.b, transform.c, 1, transform.e, transform.f],
+        background: 'rgba(0, 0, 0, 0)'
+      }
+      let renderTask = pdfPageProxy.render(renderContext)
+      await renderTask.promise
+      // pdfPageProxy.cleanup()
+      context.restore()
+    }
+
+
+    //保存上一帧图片
+    function saveBitmapToImage(matrix, bitmap, name) {
+      let canvas = document.createElement("canvas");
+      canvas.width = bitmap.width; // 设置Canvas的宽度为位图的宽度
+      canvas.height = bitmap.height; // 设置Canvas的高度为位图的高度
+
+      let ctx = canvas.getContext("2d");
+      // 获取Canvas的2D上下文
+      ctx.save()
+      ctx.setTransform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f)
+      // 将位图绘制到Canvas上
+      ctx.drawImage(bitmap, 0, 0);
+      ctx.restore()
+
+
+      // 将Canvas内容保存为图像文件
+      canvas.toBlob(function (blob) {
+        let a = document.createElement("a");
+        document.body.appendChild(a);
+        a.style = "display: none";
+        let url = window.URL.createObjectURL(blob);
+        a.href = url;
+        a.download = `${name}.png`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+      }, "image/png"); // 指定保存的图像格式，如PNG
+    }
+
+    async function renderRectPage(context, matrix, renderRect) {
+      context.save()
+      context.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f)
+      context.fillRect(renderRect.left, renderRect.top, renderRect.width, renderRect.height)
+      context.restore()
+    }
+
+
+    function getRectDifference() {
+      let offsetX = contentMatrix.e - renderImageInfo.matrix.e
+      let offsetY = contentMatrix.f - renderImageInfo.matrix.f
+      let diffRects = []
+
+      let rectx = new RenderRect(0, 0, viewBoxRect.width, viewBoxRect.height)
+      let recty = new RenderRect(0, 0, viewBoxRect.width, viewBoxRect.height)
+
+
+      let ox = 0, oy = 0, nx = 0, ny = 0
+      if (offsetY > 0) {
+        ny = offsetY
+        rectx.bottom = ny
+        recty.top = rectx.bottom
+      } else {
+        oy = -offsetY
+        rectx.top = rectx.bottom - oy
+        recty.bottom = rectx.top
+      }
+      if (offsetX > 0) {
+        nx = offsetX
+        recty.right = nx
+      } else {
+        ox = -offsetX
+        recty.left = recty.right - ox
+      }
+      return [
+        rectx, recty
+      ]
+    }
+
+
+    function matchUp(start, preInverseRect) {
+      let matchRectFromToIndex = new Array(2).fill(0)
+      let isFound = false
+      for (let i = start; i >= 0; i--) {
+        if (rects[i].checkIntersect(preInverseRect)) {
+          if (!isFound) {
+            matchRectFromToIndex[1] = i
+            isFound = true
+          }
+          matchRectFromToIndex[0] = i
+        } else if (isFound) {
+          break
+        }
+      }
+      return matchRectFromToIndex
+    }
+
+    function matchDown(start, preInverseRect) {
+      let matchRectFromToIndex = new Array(2).fill(0)
+      let isFound = false
+      for (let i = start; i < rects.length; i++) {
+        if (rects[i].checkIntersect(preInverseRect)) {
+          if (!isFound) {
+            matchRectFromToIndex[0] = i
+            isFound = true
+          }
+          matchRectFromToIndex[1] = i
+        } else if (isFound) {
+          break
+        }
+      }
+      return matchRectFromToIndex
+    }
+
+    function matchRenderRects(matrix) {
+      let preMatrixInverse = matrix.inverse()
+      let preInverseRect = viewBoxRect.matrixTransform(preMatrixInverse)
+      if (!contentMatrix || !renderIndexFromTo) {
+        return matchDown(0, preInverseRect)
+      }
+
+      let contentMatrixInverse = contentMatrix.inverse()
+      let contentInverseRect = viewBoxRect.matrixTransform(contentMatrixInverse)
+
+      //无交集
+      if (preInverseRect.top > contentInverseRect.bottom) {
+        //向下
+        return matchDown(renderIndexFromTo[1], preInverseRect)
+      }
+
+      if (preInverseRect.bottom < contentInverseRect.top) {
+        //向上
+        return matchUp(renderIndexFromTo[0], preInverseRect)
+      }
+
+      let matchRectFromToIndex = [...renderIndexFromTo]
+      //找from
+      if (preInverseRect.top < contentInverseRect.top) {
+        //向上
+        for (let i = renderIndexFromTo[0]; i >= 0; i--) {
+          if (rects[i].checkIntersect(preInverseRect)) {
+            matchRectFromToIndex[0] = i
+            continue
+          }
+          break
+        }
+      } else {
+        //向下
+        for (let i = renderIndexFromTo[0]; i < rects.length; i++) {
+          if (rects[i].checkIntersect(preInverseRect)) {
+            matchRectFromToIndex[0] = i
+            break
+          }
+        }
+      }
+      //找to
+      if (preInverseRect.bottom > contentInverseRect.bottom) {
+        //向下
+        for (let i = renderIndexFromTo[1]; i < rects.length; i++) {
+          if (rects[i].checkIntersect(preInverseRect)) {
+            matchRectFromToIndex[1] = i
+            continue
+          }
+          break
+        }
+      } else {
+        //向上
+        for (let i = renderIndexFromTo[1]; i >= 0; i--) {
+          if (rects[i].checkIntersect(preInverseRect)) {
+            matchRectFromToIndex[1] = i
+            break
+          }
+        }
+      }
+      return matchRectFromToIndex
+    }
+
+    function checkIntersect(rect1, rect2) {
+      return !(rect1.right < rect2.left ||
+        rect1.bottom < rect2.top ||
+        rect1.left > rect2.right ||
+        rect1.top > rect2.bottom)
+    }
+
+    function isMatrixModified(matrix1, matrix2) {
+      return (
+        matrix1.a !== matrix2.a ||
+        matrix1.b !== matrix2.b ||
+        matrix1.c !== matrix2.c ||
+        matrix1.d !== matrix2.d ||
+        matrix1.e !== matrix2.e ||
+        matrix1.f !== matrix2.f
+      );
     }
   </script>
 
 </head>
 
 <body>
-  <div id="wrapper"></div>
+  <div id="wrapper" onmousedown="mousedown(event)" ondblclick="dblclick(event)" onmousewheel="mousewheel(event)">
+    <canvas id="canvas" />
+  </div>
+  <div id="horizontal-scroll" class="scroll-bar">
+    <div id="horizontal-scroll-thumb" class="scrollbar-thumb" onmousedown="horizontalmousedown(event)"></div>
+  </div>
+  <div id="vertical-scroll" class="scroll-bar">
+    <div id="vertical-scroll-thumb" class="scrollbar-thumb" onmousedown="verticalmousedown(event)"></div>
+  </div>
 </body>
 
 </html>
